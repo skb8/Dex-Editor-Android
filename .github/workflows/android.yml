@@ -37,7 +37,7 @@ jobs:
 
       - name: Build APKs
         run: |
-          ./gradlew assembleDebug assembleRelease buildMcpJar --stacktrace > build.log 2>&1 || {
+          ./gradlew assembleDebug assembleRelease --stacktrace > build.log 2>&1 || {
             echo "--- BUILD FAILED, UPLOADING LOGS ---"
             cat build.log
             exit 1
@@ -54,9 +54,3 @@ jobs:
         with:
           name: app-release
           path: app/build/outputs/apk/release/*.apk
-
-      - name: Upload MCP JAR
-        uses: actions/upload-artifact@v4
-        with:
-          name: mcp-server-jar
-          path: app/build/libs/*-mcp.jar

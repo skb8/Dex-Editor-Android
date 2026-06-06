@@ -1,22 +1,28 @@
-# DEX MCP Server — План реализации
+# DEX MCP Server — План реализации (внутри Android Service)
 
 ## Архитектура
 
-Один Java HTTP-сервер поверх уже готового движка проекта. Никакого Node.js.
+Один Java HTTP-сервер, запущенный внутри фоновой службы Android (`android.app.Service`).
 
 ```
-LLM агент
-    ↓ MCP (Streamable HTTP)
-Java HTTP MCP Server  ←─── Javalin
+LLM агент (ПК)
+    ↓ MCP (HTTP по Wi-Fi / ADB)
+Android McpService (Внутри приложения)
+    ├── McpServer (Socket HTTP)
     ├── dexlib2        (уже есть в проекте)
     └── smali/baksmali (уже есть в проекте)
 ```
 
-**Почему не Node.js прослойка:**
-- Лишний процесс и зависимость
-- Двойная сериализация (MCP → Node → stdin/stdout → Java)
-- Javalin — легковесный HTTP сервер, одна зависимость
-- Весь движок уже на Java, HTTP сервер пишется прямо внутри него
+**Преимущества:**
+- Работает на самом устройстве в фоновом режиме (пользователь может переключаться между приложениями или свернуть редактор).
+- Простая отладка по Wi-Fi или через `adb forward tcp:8788 tcp:8788`.
+- Не раздувает APK лишними зависимостями (использует легкий `ServerSocket` и штатный UI диалог).
+
+---
+
+## Фоновая служба (McpService)
+
+При старте службы запускается `ServerSocket` на выбранном порту, при остановке сокет закрывается и служба уничтожается. Для предотвращения закрытия системы при нехватке памяти служба работает как Foreground Service с типом `specialUse` (или стандартный фоновый поток с постоянным уведомлением).
 
 ---
 
@@ -126,47 +132,11 @@ Java HTTP MCP Server  ←─── Javalin
 
 ---
 
-## Реализация
+## UI
 
-### HTTP MCP сервер (Javalin)
+В главное меню `MainActivity` добавлен пункт **"MCP Server"**, открывающий диалог:
 
-```java
-// McpServer.java
-Javalin app = Javalin.create().start(8788);
-
-app.post("/mcp", ctx -> {
-    McpRequest req = ctx.bodyAsClass(McpRequest.class);
-    McpResponse resp = dispatcher.handle(req);
-    ctx.json(resp);
-});
-```
-
-### UI
-
-В главное меню приложения добавить пункт **"MCP Server"**, открывающий диалог:
-
-- Кнопки **Старт / Стоп**
+- Кнопки **Старт / Стоп** (запуск и остановка службы `McpService`)
 - Поле ввода порта (по умолчанию 8788)
 - Отображение локального адреса и адресов LAN после запуска
 - Лог-консоль с прокруткой — вывод входящих запросов и ошибок компиляции Smali в реальном времени
-
----
-
-### Gradle — сборка Fat JAR (без Android UI)
-
-```gradle
-task buildMcpJar(type: Jar) {
-    archiveClassifier = 'mcp'
-    from sourceSets.main.output
-    dependsOn configurations.runtimeClasspath
-    from {
-        configurations.runtimeClasspath.collect {
-            it.isDirectory() ? it : zipTree(it)
-        }
-    }
-    manifest {
-        attributes 'Main-Class': 'modder.hub.dexeditor.mcp.McpServer'
-    }
-    exclude 'android/**', 'androidx/**'
-}
-```

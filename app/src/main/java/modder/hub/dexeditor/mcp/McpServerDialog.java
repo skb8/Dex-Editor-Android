@@ -2,6 +2,8 @@ package modder.hub.dexeditor.mcp;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
+import androidx.core.content.ContextCompat;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.text.InputType;
@@ -126,9 +128,16 @@ public class McpServerDialog {
         actionButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                Intent serviceIntent = new Intent(activity, McpService.class);
                 if (McpServer.isRunning()) {
-                    McpServer.stop();
-                    updateUi.run();
+                    activity.stopService(serviceIntent);
+                    // Give server a tiny bit of time to stop and notify listeners
+                    v.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            updateUi.run();
+                        }
+                    }, 500);
                 } else {
                     String portStr = portEditText.getText().toString().trim();
                     int port = DEFAULT_PORT;
@@ -136,13 +145,20 @@ public class McpServerDialog {
                         port = Integer.parseInt(portStr);
                     } catch (Exception ignored) {}
 
+                    serviceIntent.putExtra(McpService.EXTRA_PORT, port);
+                    activePort = port;
                     try {
-                        McpServer.start(port);
-                        activePort = port;
-                        updateUi.run();
+                        ContextCompat.startForegroundService(activity, serviceIntent);
+                        // Give service a tiny bit of time to start
+                        v.postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                updateUi.run();
+                            }
+                        }, 500);
                         Toast.makeText(activity, "Server started successfully", Toast.LENGTH_SHORT).show();
                     } catch (Exception e) {
-                        Toast.makeText(activity, "Failed to start server: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                        Toast.makeText(activity, "Failed to start service: " + e.getMessage(), Toast.LENGTH_LONG).show();
                     }
                 }
             }

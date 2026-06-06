@@ -104,44 +104,11 @@ public class McpServer {
             serverSocket = null;
             executorService = null;
             log("Server stopped");
-            synchronized (McpServer.class) {
-                McpServer.class.notifyAll();
-            }
         }
     }
 
     public static synchronized boolean isRunning() {
         return running;
-    }
-
-    public static void main(String[] args) {
-        int port = 8788;
-        if (args.length > 0) {
-            try {
-                port = Integer.parseInt(args[0]);
-            } catch (Exception e) {
-                System.err.println("Invalid port specified: " + args[0] + ". Using default " + port);
-            }
-        }
-        try {
-            start(port);
-            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    stop();
-                }
-            }));
-            // Keep thread alive
-            synchronized (McpServer.class) {
-                while (isRunning()) {
-                    McpServer.class.wait();
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("Failed to start server: " + e.getMessage());
-            e.printStackTrace();
-            System.exit(1);
-        }
     }
 
     private static void handleConnection(Socket socket) {
