@@ -12,6 +12,14 @@ import com.android.tools.smali.baksmali.formatter.BaksmaliWriter;
 import com.android.tools.smali.dexlib2.iface.ClassDef;
 import com.android.tools.smali.dexlib2.iface.Field;
 import com.android.tools.smali.dexlib2.iface.Method;
+import com.android.tools.smali.dexlib2.iface.MethodImplementation;
+import com.android.tools.smali.dexlib2.iface.instruction.Instruction;
+import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction;
+import com.android.tools.smali.dexlib2.iface.reference.FieldReference;
+import com.android.tools.smali.dexlib2.iface.reference.MethodReference;
+import com.android.tools.smali.dexlib2.iface.reference.Reference;
+import com.android.tools.smali.dexlib2.iface.reference.StringReference;
+import com.android.tools.smali.dexlib2.iface.reference.TypeReference;
 import com.android.tools.smali.smali.SmaliOptions;
 import com.android.tools.smali.smali2.Smali;
 
@@ -553,6 +561,29 @@ public class McpServer {
         dexGetJava.add("inputSchema", gjParams);
         tools.add(dexGetJava);
 
+        // 10. dex_find_usages
+        JsonObject dexFindUsages = new JsonObject();
+        dexFindUsages.addProperty("name", "dex_find_usages");
+        dexFindUsages.addProperty("description", "Finds usages (cross-references) of a class, method, or field.");
+        JsonObject fuParams = new JsonObject();
+        fuParams.addProperty("type", "object");
+        JsonObject fuProps = new JsonObject();
+        JsonObject fuTypeProp = new JsonObject();
+        fuTypeProp.addProperty("type", "string");
+        fuTypeProp.addProperty("description", "Type of reference: class, method, or field");
+        JsonObject fuQueryProp = new JsonObject();
+        fuQueryProp.addProperty("type", "string");
+        fuQueryProp.addProperty("description", "Full signature. Class: 'Lcom/pkg/Cls;', Method: 'Lcom/pkg/Cls;->methodName()V', Field: 'Lcom/pkg/Cls;->fieldName:Z'");
+        fuProps.add("type", fuTypeProp);
+        fuProps.add("signature", fuQueryProp);
+        fuParams.add("properties", fuProps);
+        JsonArray fuReq = new JsonArray();
+        fuReq.add("type");
+        fuReq.add("signature");
+        fuParams.add("required", fuReq);
+        dexFindUsages.add("inputSchema", fuParams);
+        tools.add(dexFindUsages);
+
         result.add("tools", tools);
         res.add("result", result);
         return gson.toJson(res);
@@ -695,6 +726,80 @@ public class McpServer {
                     StringBuilder sb = new StringBuilder();
                     if (resultsList.isEmpty()) {
                         sb.append("No matches found.");
+                    } else {
+                        for (String r : resultsList) {
+                            sb.append(r).append("\n");
+                        }
+                    }
+                    textObj.addProperty("text", sb.toString());
+                } else if ("dex_find_usages".equals(toolName)) {
+                    String queryType = args.has("type") ? args.get("type").getAsString() : "";
+                    String signature = args.has("signature") ? args.get("signature").getAsString() : "";
+
+                    List<String> resultsList = new ArrayList<>();
+
+                    for (ClassDef classDef : classTree.classMap.values()) {
+                        String currentClass = classDef.getType();
+                        
+                        // Class Usage Check (Superclass/Interfaces)
+                        if ("class".equalsIgnoreCase(queryType)) {
+                            if (signature.equals(classDef.getSuperclass())) {
+                                resultsList.add("Extended by: " + currentClass);
+                            }
+                            if (classDef.getInterfaces() != null) {
+                                for (String iface : classDef.getInterfaces()) {
+                                    if (signature.equals(iface)) {
+                                        resultsList.add("Implemented by: " + currentClass);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Method bodies (Instructions) Check
+                        for (Method method : classDef.getMethods()) {
+                            MethodImplementation impl = method.getImplementation();
+                            if (impl != null) {
+                                for (Instruction instruction : impl.getInstructions()) {
+                                    if (instruction instanceof ReferenceInstruction) {
+                                        Reference ref = ((ReferenceInstruction) instruction).getReference();
+                                        if ("class".equalsIgnoreCase(queryType) && ref instanceof TypeReference) {
+                                            if (signature.equals(((TypeReference) ref).getType())) {
+                                                resultsList.add("Class referenced in " + currentClass + " -> " + method.getName());
+                                            }
+                                        } else if ("method".equalsIgnoreCase(queryType) && ref instanceof MethodReference) {
+                                            MethodReference mRef = (MethodReference) ref;
+                                            String mSig = mRef.getDefiningClass() + "->" + mRef.getName() + "(";
+                                            for (CharSequence param : mRef.getParameterTypes()) {
+                                                mSig += param;
+                                            }
+                                            mSig += ")" + mRef.getReturnType();
+                                            if (signature.equals(mSig)) {
+                                                resultsList.add("Method called in " + currentClass + " -> " + method.getName());
+                                            }
+                                        } else if ("field".equalsIgnoreCase(queryType) && ref instanceof FieldReference) {
+                                            FieldReference fRef = (FieldReference) ref;
+                                            String fSig = fRef.getDefiningClass() + "->" + fRef.getName() + ":" + fRef.getType();
+                                            if (signature.equals(fSig)) {
+                                                resultsList.add("Field accessed in " + currentClass + " -> " + method.getName());
+                                            }
+                                        } else if ("string".equalsIgnoreCase(queryType) && ref instanceof StringReference) {
+                                            if (signature.equals(((StringReference) ref).getString())) {
+                                                resultsList.add("String referenced in " + currentClass + " -> " + method.getName());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (resultsList.size() >= 300) {
+                            resultsList.add("...and more matches (truncated to 300)");
+                            break;
+                        }
+                    }
+
+                    StringBuilder sb = new StringBuilder();
+                    if (resultsList.isEmpty()) {
+                        sb.append("No usages found for ").append(signature);
                     } else {
                         for (String r : resultsList) {
                             sb.append(r).append("\n");
