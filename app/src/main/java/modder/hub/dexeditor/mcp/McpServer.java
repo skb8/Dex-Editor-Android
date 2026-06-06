@@ -17,25 +17,25 @@ import com.android.tools.smali.smali2.Smali;
 
 import modder.hub.dexeditor.utils.ClassTree;
 
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
-import com.sun.net.httpserver.HttpServer;
-
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.StringWriter;
-import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class McpServer {
-    private static HttpServer server;
+    private static ServerSocket serverSocket;
+    private static ExecutorService executorService;
+    private static boolean running = false;
     public static ClassTree classTree;
     private static LogListener logListener;
     private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
@@ -46,6 +46,72 @@ public class McpServer {
 
     public static void setLogListener(LogListener listener) {
         logListener = listener;
+    }
+
+    private static void log(String msg) {
+        System.out.println("[MCP] " + msg);
+        if (logListener != null) {
+            logListener.onLog(msg);
+        }
+    }
+
+    public static synchronized void start(final int port) throws IOException {
+        if (running) {
+            return;
+        }
+
+        serverSocket = new ServerSocket(port);
+        running = true;
+        executorService = Executors.newCachedThreadPool();
+
+        executorService.execute(new Runnable() {
+            @Override
+            public void run() {
+                log("Server started on port " + port);
+                while (running) {
+                    try {
+                        final Socket socket = serverSocket.accept();
+                        executorService.execute(new Runnable() {
+                            @Override
+                            public void run() {
+                                handleConnection(socket);
+                            }
+                        });
+                    } catch (IOException e) {
+                        if (!running) {
+                            break;
+                        }
+                        log("Accept error: " + e.getMessage());
+                    }
+                }
+            }
+        });
+    }
+
+    public static synchronized void stop() {
+        if (running) {
+            running = false;
+            try {
+                if (serverSocket != null) {
+                    serverSocket.close();
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            if (executorService != null) {
+                executorService.shutdownNow();
+            }
+            serverSocket = null;
+            executorService = null;
+            log("Server stopped");
+            synchronized (McpServer.class) {
+                McpServer.class.notifyAll();
+            }
+        }
+    }
+
+    public static synchronized boolean isRunning() {
+        return running;
     }
 
     public static void main(String[] args) {
@@ -78,102 +144,137 @@ public class McpServer {
         }
     }
 
-    private static void log(String msg) {
-        System.out.println("[MCP] " + msg);
-        if (logListener != null) {
-            logListener.onLog(msg);
-        }
-    }
+    private static void handleConnection(Socket socket) {
+        try {
+            socket.setSoTimeout(10000); // 10s timeout
+            InputStream is = socket.getInputStream();
+            OutputStream os = socket.getOutputStream();
 
-    public static synchronized void start(int port) throws IOException {
-        if (server != null) {
-            return;
-        }
-
-        server = HttpServer.create(new InetSocketAddress(port), 0);
-        server.createContext("/", new McpHandler());
-        server.createContext("/mcp", new McpHandler());
-        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
-        server.start();
-        log("Server started on port " + port);
-    }
-
-    public static synchronized void stop() {
-        if (server != null) {
-            server.stop(0);
-            server = null;
-            log("Server stopped");
-            synchronized (McpServer.class) {
-                McpServer.class.notifyAll();
-            }
-        }
-    }
-
-    public static synchronized boolean isRunning() {
-        return server != null;
-    }
-
-    private static class McpHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            log("Received request: " + exchange.getRequestMethod() + " " + exchange.getRequestURI().getPath());
-
-            // Add CORS headers for browser integrations if any
-            exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "*");
-            exchange.getResponseHeaders().add("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
-            exchange.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type");
-
-            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
-                exchange.sendResponseHeaders(204, -1);
-                return;
-            }
-
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                sendResponse(exchange, 405, "Method Not Allowed. Use POST.");
-                return;
-            }
-
-            try {
-                InputStream is = exchange.getRequestBody();
-                ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                byte[] buffer = new byte[4096];
-                int len;
-                while ((len = is.read(buffer)) != -1) {
-                    bos.write(buffer, 0, len);
+            // Read request line and headers
+            ByteArrayOutputStream headerBos = new ByteArrayOutputStream();
+            int b;
+            int consecutiveNewlines = 0;
+            while ((b = is.read()) != -1) {
+                headerBos.write(b);
+                char c = (char) b;
+                if (c == '\n') {
+                    consecutiveNewlines++;
+                } else if (c != '\r') {
+                    consecutiveNewlines = 0;
                 }
-                String requestBody = bos.toString("UTF-8");
-                log("Request body: " + requestBody);
 
-                String responseBody = processRequest(requestBody);
-                log("Response body: " + responseBody);
-
-                sendResponse(exchange, 200, responseBody);
-            } catch (Exception e) {
-                log("Error: " + e.getMessage());
-                e.printStackTrace();
-                sendErrorResponse(exchange, 500, e.getMessage());
+                if (consecutiveNewlines >= 2 || (consecutiveNewlines == 1 && headerBos.toString().endsWith("\n\n"))) {
+                    break;
+                }
             }
-        }
 
-        private void sendResponse(HttpExchange exchange, int status, String response) throws IOException {
-            byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().set("Content-Type", "application/json");
-            exchange.sendResponseHeaders(status, bytes.length);
-            OutputStream os = exchange.getResponseBody();
-            os.write(bytes);
-            os.close();
-        }
+            String headersStr = headerBos.toString("UTF-8");
+            String[] lines = headersStr.split("\r?\n");
+            if (lines.length == 0 || lines[0].isEmpty()) {
+                sendHttpError(os, 400, "Bad Request");
+                socket.close();
+                return;
+            }
 
-        private void sendErrorResponse(HttpExchange exchange, int status, String errorMsg) throws IOException {
-            JsonObject err = new JsonObject();
-            JsonObject errorDetail = new JsonObject();
-            errorDetail.addProperty("code", -32603);
-            errorDetail.addProperty("message", errorMsg);
-            err.addProperty("jsonrpc", "2.0");
-            err.add("error", errorDetail);
-            err.add("id", null);
-            sendResponse(exchange, status, gson.toJson(err));
+            String requestLine = lines[0];
+            String[] reqParts = requestLine.split(" ");
+            if (reqParts.length < 2) {
+                sendHttpError(os, 400, "Bad Request");
+                socket.close();
+                return;
+            }
+
+            String method = reqParts[0];
+            String path = reqParts[1];
+
+            // Parse headers to find Content-Length
+            int contentLength = 0;
+            for (String line : lines) {
+                if (line.toLowerCase().startsWith("content-length:")) {
+                    contentLength = Integer.parseInt(line.substring(15).trim());
+                }
+            }
+
+            // Handle preflight OPTIONS request
+            if ("OPTIONS".equalsIgnoreCase(method)) {
+                sendHttpOptionsResponse(os);
+                socket.close();
+                return;
+            }
+
+            if (!"POST".equalsIgnoreCase(method)) {
+                sendHttpError(os, 405, "Method Not Allowed");
+                socket.close();
+                return;
+            }
+
+            // Read Body
+            byte[] bodyBytes = new byte[contentLength];
+            int totalRead = 0;
+            while (totalRead < contentLength) {
+                int read = is.read(bodyBytes, totalRead, contentLength - totalRead);
+                if (read == -1) {
+                    break;
+                }
+                totalRead += read;
+            }
+
+            String requestBody = new String(bodyBytes, StandardCharsets.UTF_8);
+            log("Received request: POST " + path);
+            log("Request body: " + requestBody);
+
+            String responseBody = processRequest(requestBody);
+            log("Response body: " + responseBody);
+
+            sendHttpResponse(os, 200, "OK", "application/json", responseBody);
+        } catch (Exception e) {
+            log("Connection error: " + e.getMessage());
+            e.printStackTrace();
+            try {
+                sendHttpError(socket.getOutputStream(), 500, e.getMessage());
+            } catch (Exception ignored) {}
+        } finally {
+            try {
+                socket.close();
+            } catch (Exception ignored) {}
         }
+    }
+
+    private static void sendHttpOptionsResponse(OutputStream os) throws IOException {
+        String response = "HTTP/1.1 204 No Content\r\n" +
+                "Access-Control-Allow-Origin: *\r\n" +
+                "Access-Control-Allow-Methods: POST, GET, OPTIONS\r\n" +
+                "Access-Control-Allow-Headers: Content-Type\r\n" +
+                "Connection: close\r\n\r\n";
+        os.write(response.getBytes(StandardCharsets.UTF_8));
+        os.flush();
+    }
+
+    private static void sendHttpError(OutputStream os, int code, String msg) throws IOException {
+        JsonObject err = new JsonObject();
+        JsonObject errorDetail = new JsonObject();
+        errorDetail.addProperty("code", -32603);
+        errorDetail.addProperty("message", msg);
+        err.addProperty("jsonrpc", "2.0");
+        err.add("error", errorDetail);
+        err.add("id", null);
+
+        String json = gson.toJson(err);
+        sendHttpResponse(os, code, msg, "application/json", json);
+    }
+
+    private static void sendHttpResponse(OutputStream os, int status, String statusMsg, String contentType, String body) throws IOException {
+        byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
+        String responseHeaders = "HTTP/1.1 " + status + " " + statusMsg + "\r\n" +
+                "Content-Type: " + contentType + "; charset=utf-8\r\n" +
+                "Content-Length: " + bodyBytes.length + "\r\n" +
+                "Access-Control-Allow-Origin: *\r\n" +
+                "Access-Control-Allow-Methods: POST, GET, OPTIONS\r\n" +
+                "Access-Control-Allow-Headers: Content-Type\r\n" +
+                "Connection: close\r\n\r\n";
+        os.write(responseHeaders.getBytes(StandardCharsets.UTF_8));
+        os.write(bodyBytes);
+        os.flush();
     }
 
     private static String processRequest(String requestBody) {
@@ -480,7 +581,6 @@ public class McpServer {
                     outline.append("# Fields\n");
                     for (Field field : classDef.getFields()) {
                         outline.append(".field ");
-                        // Access flags or just simple outline
                         outline.append(field.getName()).append(":").append(field.getType()).append("\n");
                     }
 
@@ -530,14 +630,11 @@ public class McpServer {
                                 }
                             }
                         } else if ("string".equalsIgnoreCase(type) || "code".equalsIgnoreCase(type)) {
-                            // Search inside method bodies or string references.
-                            // Simply disassemble class and check
                             String smali = getPureSmali(classDef);
                             if (smali.contains(query)) {
                                 resultsList.add("Match in " + classSig);
                             }
                         }
-                        // Limit results to avoid memory bloating
                         if (resultsList.size() >= 200) {
                             resultsList.add("...and more matches (truncated to 200)");
                             break;
@@ -573,7 +670,6 @@ public class McpServer {
                     String updatedMethodSmali = methodSmali.replace(oldStr, newStr);
                     String updatedClassSmali = classSmali.replace(methodSmali, updatedMethodSmali);
 
-                    // Compile and Save
                     ClassDef assembled = Smali.assemble(updatedClassSmali, new SmaliOptions(), classTree.getOpenedDexVersion());
                     classTree.saveClassDef(assembled);
 
@@ -592,7 +688,6 @@ public class McpServer {
 
                     String updatedClassSmali = classSmali.replace(methodSmali, newMethodSmali);
 
-                    // Compile and Save
                     ClassDef assembled = Smali.assemble(updatedClassSmali, new SmaliOptions(), classTree.getOpenedDexVersion());
                     classTree.saveClassDef(assembled);
 
@@ -602,7 +697,6 @@ public class McpServer {
                     boolean stripDebug = args.has("stripDebug") && args.get("stripDebug").getAsBoolean();
 
                     if (!outPath.isEmpty()) {
-                        // Change output destination in classTree paths if specified
                         classTree.paths.set(0, outPath);
                     }
 
@@ -677,7 +771,6 @@ public class McpServer {
     }
 
     private static String getPureSmali(ClassDef classDef) throws Exception {
-        // If we have modified class in pending map, use it
         String key = classDef.getType();
         String typeKey = key.substring(1, key.length() - 1);
         if (classTree.getPendingSmaliMap().containsKey(typeKey)) {

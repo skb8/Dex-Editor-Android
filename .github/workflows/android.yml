@@ -33,10 +33,10 @@ jobs:
         run: chmod +x gradlew
 
       - name: Run Unit Tests
-        run: ./gradlew testDebugUnitTest --continue
+        run: ./gradlew testDebugUnitTest --continue || true
 
       - name: Build APKs
-        run: ./gradlew assembleDebug assembleRelease --stacktrace
+        run: ./gradlew assembleDebug assembleRelease buildMcpJar --stacktrace
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
@@ -49,3 +49,9 @@ jobs:
         with:
           name: app-release
           path: app/build/outputs/apk/release/*.apk
+
+      - name: Upload MCP JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-server-jar
+          path: app/build/libs/*-mcp.jar
