@@ -54,15 +54,33 @@ public class McpServer {
         }
     }
 
-    public static synchronized void loadDexDirectly(String path) throws Exception {
-        File file = new File(path);
-        if (!file.exists()) {
-            throw new Exception("File not found: " + path);
+    public static void loadDexDirectly(String path) throws Exception {
+        String[] parts = path.split(";");
+        List<String> list = new ArrayList<>();
+        for (String p : parts) {
+            if (!p.trim().isEmpty()) {
+                list.add(p.trim());
+            }
         }
-        loadedDexPath = file.getAbsolutePath();
-        List<String> paths = Collections.singletonList(file.getAbsolutePath());
+        loadDexDirectly(list);
+    }
+
+    public static synchronized void loadDexDirectly(List<String> paths) throws Exception {
+        if (paths == null || paths.isEmpty()) {
+            throw new Exception("Paths list is empty");
+        }
+        List<String> resolved = new ArrayList<>();
+        for (String p : paths) {
+            File f = new File(p);
+            if (f.exists()) {
+                resolved.add(f.getAbsolutePath());
+            } else {
+                throw new Exception("File not found: " + p);
+            }
+        }
+        loadedDexPath = String.join(";", resolved);
         String cacheDir = new File(System.getProperty("java.io.tmpdir"), "dex_mcp_cache").getAbsolutePath();
-        classTree = new ClassTree(paths, cacheDir);
+        classTree = new ClassTree(resolved, cacheDir);
         log("DEX loaded successfully: " + loadedDexPath);
         if (pathChangeListener != null) {
             pathChangeListener.onPathChanged(loadedDexPath);
@@ -520,6 +538,21 @@ public class McpServer {
         dexSave.add("inputSchema", svParams);
         tools.add(dexSave);
 
+        // 9. dex_get_java
+        JsonObject dexGetJava = new JsonObject();
+        dexGetJava.addProperty("name", "dex_get_java");
+        dexGetJava.addProperty("description", "Decompiles a class into Java code using JADX.");
+        JsonObject gjParams = new JsonObject();
+        gjParams.addProperty("type", "object");
+        JsonObject gjProps = new JsonObject();
+        gjProps.add("className", clsNameProp);
+        gjParams.add("properties", gjProps);
+        JsonArray gjReq = new JsonArray();
+        gjReq.add("className");
+        gjParams.add("required", gjReq);
+        dexGetJava.add("inputSchema", gjParams);
+        tools.add(dexGetJava);
+
         result.add("tools", tools);
         res.add("result", result);
         return gson.toJson(res);
@@ -537,12 +570,20 @@ public class McpServer {
 
         try {
             if ("dex_load".equals(toolName)) {
-                String path = args.has("path") ? args.get("path").getAsString() : "";
-                if (path.isEmpty()) {
-                    throw new Exception("Path parameter is required");
+                if (args.has("paths") && args.get("paths").isJsonArray()) {
+                    JsonArray arr = args.getAsJsonArray("paths");
+                    List<String> list = new ArrayList<>();
+                    for (int i = 0; i < arr.size(); i++) {
+                        list.add(arr.get(i).getAsString());
+                    }
+                    loadDexDirectly(list);
+                } else {
+                    String path = args.has("path") ? args.get("path").getAsString() : "";
+                    if (path.isEmpty()) {
+                        throw new Exception("Path or paths parameter is required");
+                    }
+                    loadDexDirectly(path);
                 }
-
-                loadDexDirectly(path);
 
                 textObj.addProperty("text", "DEX loaded successfully.\nVersion: " + classTree.getOpenedDexVersion() + "\nTotal Classes: " + classTree.classMap.size());
             } else {
@@ -736,6 +777,12 @@ public class McpServer {
                     });
 
                     textObj.addProperty("text", "DEX files saved successfully.\n" + progressLog.toString());
+                } else if ("dex_get_java".equals(toolName)) {
+                    String className = args.has("className") ? args.get("className").getAsString() : "";
+                    ClassDef classDef = findClassDef(className);
+                    String smali = getPureSmali(classDef);
+                    String javaCode = modder.hub.dexeditor.smali.Smali2Java.translate(smali, classTree.getOpenedDexVersion());
+                    textObj.addProperty("text", javaCode);
                 } else {
                     throw new Exception("Unknown tool: " + toolName);
                 }
