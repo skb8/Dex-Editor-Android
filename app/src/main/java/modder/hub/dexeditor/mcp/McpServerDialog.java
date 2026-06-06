@@ -39,7 +39,7 @@ public class McpServerDialog {
         final TextInputLayout portInputLayout = new TextInputLayout(activity, null, com.google.android.material.R.style.Widget_MaterialComponents_TextInputLayout_OutlinedBox);
         portInputLayout.setHint("Port");
         LinearLayout.LayoutParams portParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.wrapContent);
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         portParams.bottomMargin = dpToPx(activity, 12);
         portInputLayout.setLayoutParams(portParams);
 
@@ -58,7 +58,7 @@ public class McpServerDialog {
         // Start/Stop Button
         final MaterialButton actionButton = new MaterialButton(activity, null, com.google.android.material.R.style.Widget_MaterialComponents_Button);
         LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.wrapContent);
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         btnParams.bottomMargin = dpToPx(activity, 16);
         actionButton.setLayoutParams(btnParams);
         mainLayout.addView(actionButton);
