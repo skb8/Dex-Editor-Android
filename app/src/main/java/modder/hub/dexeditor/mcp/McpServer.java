@@ -584,6 +584,39 @@ public class McpServer {
         dexFindUsages.add("inputSchema", fuParams);
         tools.add(dexFindUsages);
 
+        // 11. dex_create_class
+        JsonObject dexCreateClass = new JsonObject();
+        dexCreateClass.addProperty("name", "dex_create_class");
+        dexCreateClass.addProperty("description", "Creates and compiles a completely new class from Smali code.");
+        JsonObject ccParams = new JsonObject();
+        ccParams.addProperty("type", "object");
+        JsonObject ccProps = new JsonObject();
+        JsonObject smaliCodeProp = new JsonObject();
+        smaliCodeProp.addProperty("type", "string");
+        smaliCodeProp.addProperty("description", "Full Smali code of the new class");
+        ccProps.add("smali", smaliCodeProp);
+        ccParams.add("properties", ccProps);
+        JsonArray ccReq = new JsonArray();
+        ccReq.add("smali");
+        ccParams.add("required", ccReq);
+        dexCreateClass.add("inputSchema", ccParams);
+        tools.add(dexCreateClass);
+
+        // 12. dex_remove_class
+        JsonObject dexRemoveClass = new JsonObject();
+        dexRemoveClass.addProperty("name", "dex_remove_class");
+        dexRemoveClass.addProperty("description", "Removes a class completely from the DEX.");
+        JsonObject rcParams = new JsonObject();
+        rcParams.addProperty("type", "object");
+        JsonObject rcProps = new JsonObject();
+        rcProps.add("className", clsNameProp);
+        rcParams.add("properties", rcProps);
+        JsonArray rcReq = new JsonArray();
+        rcReq.add("className");
+        rcParams.add("required", rcReq);
+        dexRemoveClass.add("inputSchema", rcParams);
+        tools.add(dexRemoveClass);
+
         result.add("tools", tools);
         res.add("result", result);
         return gson.toJson(res);
@@ -888,6 +921,20 @@ public class McpServer {
                     String smali = getPureSmali(classDef);
                     String javaCode = modder.hub.dexeditor.smali.Smali2Java.translate(smali, classTree.getOpenedDexVersion());
                     textObj.addProperty("text", javaCode);
+                } else if ("dex_create_class".equals(toolName)) {
+                    String smaliCode = args.has("smali") ? args.get("smali").getAsString() : "";
+                    if (smaliCode.isEmpty()) throw new Exception("Smali code is empty");
+                    ClassDef assembled = Smali.assemble(smaliCode, new SmaliOptions(), classTree.getOpenedDexVersion());
+                    classTree.saveClassDef(assembled);
+                    textObj.addProperty("text", "Successfully created/updated class: " + assembled.getType());
+                } else if ("dex_remove_class".equals(toolName)) {
+                    String className = args.has("className") ? args.get("className").getAsString() : "";
+                    String type = className;
+                    if (type.startsWith("L") && type.endsWith(";")) {
+                        type = type.substring(1, type.length() - 1);
+                    }
+                    classTree.removeClass(type);
+                    textObj.addProperty("text", "Successfully marked class for removal: " + className + ". Call dex_save to apply.");
                 } else {
                     throw new Exception("Unknown tool: " + toolName);
                 }
