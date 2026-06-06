@@ -249,20 +249,18 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
             public void afterTextChanged(android.text.Editable s) {
                 final String path = s.toString().trim();
                 if (path.isEmpty()) return;
-                final File f = new File(path);
-                if (f.exists() && f.isFile()) {
-                    if (McpServer.isRunning() && !path.equals(McpServer.loadedDexPath)) {
-                        new Thread(new Runnable() {
-                            @Override
-                            public void run() {
-                                try {
-                                    McpServer.loadDexDirectly(path);
-                                } catch (Exception e) {
-                                    e.printStackTrace();
-                                }
+                
+                if (McpServer.isRunning() && !path.equals(McpServer.loadedDexPath)) {
+                    new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                McpServer.loadDexDirectly(path);
+                            } catch (Exception e) {
+                                e.printStackTrace();
                             }
-                        }).start();
-                    }
+                        }
+                    }).start();
                 }
             }
         });
@@ -296,7 +294,7 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
     public void pickDexFile(final TextView textView, String title, String positiveButtonText, String fileExtension) {
         final String lastPathKey = "LastPath";
         DialogProperties dialogProperties = new DialogProperties();
-        dialogProperties.selection_mode = 0; // Single file selection
+        dialogProperties.selection_mode = 1; // Multiple file selection
         dialogProperties.selection_type = 0; // File selection
         dialogProperties.root = new File(FileUtil.getExternalStorageDir());
         dialogProperties.error_dir = new File(FileUtil.getExternalStorageDir());
@@ -318,11 +316,19 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
         filePickerDialog.setDialogSelectionListener(new DialogSelectionListener() {
             @Override
             public void onSelectedFilePaths(String[] selectedFilePaths) {
-                ArrayList<String> filePaths = new ArrayList<>(Arrays.asList(selectedFilePaths));
-                textView.setText(filePaths.get(0)); // Set the selected file path to the TextView
+                if (selectedFilePaths == null || selectedFilePaths.length == 0) return;
+                
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < selectedFilePaths.length; i++) {
+                    sb.append(selectedFilePaths[i]);
+                    if (i < selectedFilePaths.length - 1) {
+                        sb.append(";");
+                    }
+                }
+                textView.setText(sb.toString()); // Set multiple paths to TextView
 
                 // Save the last selected directory path in SharedPreferences
-                sharedPreferences.edit().putString(lastPathKey, new File(filePaths.get(0)).getParentFile().getAbsolutePath()).commit();
+                sharedPreferences.edit().putString(lastPathKey, new File(selectedFilePaths[0]).getParentFile().getAbsolutePath()).commit();
             }
         });
 
