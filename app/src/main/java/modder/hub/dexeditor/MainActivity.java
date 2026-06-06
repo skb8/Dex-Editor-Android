@@ -209,10 +209,29 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
                     return;
                 }
                 String initialPath = dexFilePathEditText.getText().toString();
+                // If it's a concatenated path from MCP, take only the first one
+                if (initialPath.contains(";")) {
+                    initialPath = initialPath.split(";")[0];
+                }
+                
                 DexFileSelector dexSelector = new DexFileSelector(MainActivity.this, initialPath);
                 dexSelector.setOnFilesSelectedListener(new DexFileSelector.OnFilesSelectedListener() {
                     @Override
-                    public void onFilesSelected(List<String> selectedFilePaths) {
+                    public void onFilesSelected(final List<String> selectedFilePaths) {
+                        // Load into MCP Server in background if running
+                        if (modder.hub.dexeditor.mcp.McpServer.isRunning()) {
+                            new Thread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    try {
+                                        modder.hub.dexeditor.mcp.McpServer.loadDexDirectly(selectedFilePaths);
+                                    } catch (Exception e) {
+                                        e.printStackTrace();
+                                    }
+                                }
+                            }).start();
+                        }
+
                         // Convert List<String> to ArrayList<String> (if needed for Intent)
                         ArrayList<String> filePathsArrayList = new ArrayList<String>(selectedFilePaths);
 
@@ -242,28 +261,7 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
 
     // Initialize app logic (currently empty)
     private void initializeLogic() {
-        dexFilePathEditText.addTextChangedListener(new android.text.TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
-            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
-            @Override
-            public void afterTextChanged(android.text.Editable s) {
-                final String path = s.toString().trim();
-                if (path.isEmpty()) return;
-                
-                if (McpServer.isRunning() && !path.equals(McpServer.loadedDexPath)) {
-                    new Thread(new Runnable() {
-                        @Override
-                        public void run() {
-                            try {
-                                McpServer.loadDexDirectly(path);
-                            } catch (Exception e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    }).start();
-                }
-            }
-        });
+        // We moved MCP loading logic to DexFileSelector listener
     }
 
     @Override
@@ -294,7 +292,7 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
     public void pickDexFile(final TextView textView, String title, String positiveButtonText, String fileExtension) {
         final String lastPathKey = "LastPath";
         DialogProperties dialogProperties = new DialogProperties();
-        dialogProperties.selection_mode = 1; // Multiple file selection
+        dialogProperties.selection_mode = 0; // Single file selection
         dialogProperties.selection_type = 0; // File selection
         dialogProperties.root = new File(FileUtil.getExternalStorageDir());
         dialogProperties.error_dir = new File(FileUtil.getExternalStorageDir());
@@ -318,14 +316,7 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
             public void onSelectedFilePaths(String[] selectedFilePaths) {
                 if (selectedFilePaths == null || selectedFilePaths.length == 0) return;
                 
-                StringBuilder sb = new StringBuilder();
-                for (int i = 0; i < selectedFilePaths.length; i++) {
-                    sb.append(selectedFilePaths[i]);
-                    if (i < selectedFilePaths.length - 1) {
-                        sb.append(";");
-                    }
-                }
-                textView.setText(sb.toString()); // Set multiple paths to TextView
+                textView.setText(selectedFilePaths[0]); // Set single path to TextView
 
                 // Save the last selected directory path in SharedPreferences
                 sharedPreferences.edit().putString(lastPathKey, new File(selectedFilePaths[0]).getParentFile().getAbsolutePath()).commit();
