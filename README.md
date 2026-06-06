@@ -1,146 +1,94 @@
+# Dex-Editor-Android + MCP Server (Fork)
+
+Это форк оригинального проекта advanced Android DEX file editor, в который добавлена поддержка **MCP (Model Context Protocol)**. 
+
+Этот форк позволяет подключить вашего локального ИИ-агента (например, Claude Desktop, Pi или любой другой MCP-клиент) напрямую к вашему Android-устройству для чтения, поиска, модификации и сборки DEX/APK файлов.
+
+---
+
+## 🚀 Новые возможности в этом форке
+
+- **Встроенный MCP HTTP Сервер**: Работает внутри фоновой службы Android (`McpService`) с Foreground-уведомлением. Сервер не отключается при сворачивании приложения.
+- **Инструменты для LLM агента (Tools)**:
+  - `dex_load` — Загрузка DEX/APK файлов в память.
+  - `dex_list_classes` — Получение списка классов с фильтрацией и постраничной навигацией.
+  - `dex_get_class_outline` — Получение сигнатур полей и методов (без тяжелых тел методов) для экономии контекстного окна модели.
+  - `dex_get_method` — Декомпиляция и чтение Smali-кода одного конкретного метода.
+  - `dex_search` — Быстрый поиск в DEX по классам, методам, полям, строкам или коду.
+  - `dex_replace_in_method` — Умная замена подстроки в методе (`str_replace` подход). Модель правит конкретный участок, а компилятор Smali сразу проверяет корректность сборки.
+  - `dex_replace_method` — Полная замена тела метода.
+  - `dex_save` — Компиляция измененных классов обратно в DEX и сохранение файла.
+- **Двусторонняя синхронизация**:
+  - Если LLM-агент загружает файл через `dex_load`, путь к нему тут же отображается на главном экране приложения.
+  - Если пользователь сам выбирает файл на главном экране приложения (через встроенный проводник или вставкой пути), и MCP сервер при этом запущен, файл автоматически загружается в память сервера.
+- **Контроль и логирование в UI**:
+  - Кнопка **MCP Server** добавлена в меню главного экрана.
+  - Панель управления позволяет задать порт, запустить/остановить службу, скопировать логи в буфер обмена одной кнопкой и просматривать входящие запросы от модели и сообщения компилятора в реальном времени.
+
+---
+
+## 🛠 Настройка и использование
+
+1. **Запуск сервера**:
+   - Установите собранный APK на телефон.
+   - Откройте приложение, нажмите на три точки (или иконку шестеренки) в правом верхнем углу $\rightarrow$ **MCP Server**.
+   - Укажите порт (по умолчанию `8788`) и нажмите **Start Server**.
+   - В шторке появится уведомление о работе службы, а в лог-консоли отобразятся доступные IP-адреса.
+
+2. **Подключение с ПК (через ADB)**:
+   - Подключите телефон к компьютеру по USB и выполните проброс портов:
+     ```bash
+     adb forward tcp:8788 tcp:8788
+     ```
+   - Теперь сервер доступен на вашем компьютере по адресу `http://127.0.0.1:8788/mcp`.
+
+3. **Настройка клиента (например, Claude Desktop)**:
+   Добавьте сервер в ваш файл конфигурации `claude_desktop_config.json`:
+   ```json
+   {
+     "mcpServers": {
+       "dex-editor-mcp": {
+         "command": "curl",
+         "args": ["-s", "-X", "POST", "-H", "Content-Type: application/json", "-d", "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1}", "http://127.0.0.1:8788/mcp"]
+       }
+     }
+   }
+   ```
+   *(Или используйте любой HTTP-транспорт клиент для MCP).*
+
+---
+
+<details>
+<summary><b>Оригинальное описание проекта (Original README)</b></summary>
+
 ## My first open source Project 😀🇮🇳
 # Dex-Editor-Android
 [![Android CI](https://github.com/developer-krushna/Dex-Editor-Android/actions/workflows/android.yml/badge.svg)](https://github.com/developer-krushna/Dex-Editor-Android/actions/workflows/android.yml)
 A work-in-progress multifunctional advanced *Android **DEX** file editor* for Android, using mainly [smali](https://github.com/google/smali) & [dexlib2](https://github.com/google/smali/tree/main/dexlib2).
-## Available decompilers
+
+### Available decompilers
 - [JADX](https://github.com/skylot/jadx)
 
-## Available features
-- [x] Dex Smali classes TreeView
-- [x] Smali navigation (methods, fields and strings list)
-- [x] Decompile single smali classes
-- [x] Decompiling single smali method bodies to java
-- [x] Batch class deletion
-- [x] Smali method flow diagram
-- [x] Editing Smali with best code editor
-- [x] Batch class editor and navigator
-- [x] Multi dex loader and compiler
-- [x] Smali full fetured search and replacement with all type search methods
-- [x] Jump to another class
-- [x] Smali compilation options
-- [x] Strings list tab
-- [x] Jump to smali lables (cond, try_catch etc.) within method body
-- [x] Custom editor selection menu (Calling translation apps)
-- [x] Faster Dex compilation with real time progress update
-- [x] Supported propper error handling during smali compilation
-- [x] Enhancement in smali library
-- [x] Full featured Smali Editor
-- [x] Supported DEX version 40 and 41(Partially)
-- [x] Working on android api 21 (only my build apk)
-## Getting Started
+### Available features
+- Dex Smali classes TreeView
+- Smali navigation (methods, fields and strings list)
+- Decompile single smali classes
+- Decompiling single smali method bodies to java
+- Batch class deletion
+- Smali method flow diagram
+- Editing Smali with best code editor
+- Batch class editor and navigator
+- Multi dex loader and compiler
+- Smali full featured search and replacement
+- Custom editor selection menu
+- Faster Dex compilation with real time progress update
+- Supported DEX version 40 and 41
 
-### Prerequisites
-- **Android Studio**: Latest version (Ladybug or newer recommended)
-- **JDK**: 17 or 21 (Required for Gradle 9+)
-- **Android SDK**: API 37 (Compile SDK)
-- **Min SDK**: API 24
-
-### Installation
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/developer-krushna/Dex-Editor-Android.git
-   ```
-2. **Open the project**:
-   - Launch Android Studio.
-   - Click `File -> Open` and select the `Dex-Editor-Android` folder.
-3. **Sync and Build**:
-   - Wait for the Gradle sync to finish.
-   - Click the **Run** button or navigate to `Build -> Build Bundle(s) / APK(s) -> Build APK(s)`.
-
-## Project Environment
+### Environment
 - **Gradle Version**: 9.5.0
 - **Android Gradle Plugin (AGP)**: 9.2.1
-- **Java Version**: 11 (for Sketchware Pro) / 17+ (for Android Studio)
+- **JDK**: 17 or 21 (Required for Gradle 9+)
+- **Min SDK**: API 24
+- **Compile SDK**: API 37
 
-## To-Do
-- [ ] Batch Insertion and extraction of classes
-- [ ] Direct class renamer
-
-## Project build with
-- [Sketchware Pro](https://github.com/Sketchware-Pro/Sketchware-Pro) , Java 11 version
-- Android Studio
-
-### Download sample app
-[Dex Editor +](https://github.com/developer-krushna/Dex-Editor-Android/releases/tag/v1.3_final)
-## Project Previews
-
-<table align="center">
-  <tr>
-    <td align="center" width="300">
-      <b>TreeView</b><br>
-      <video src="https://github.com/user-attachments/assets/140ecd9d-91b6-40ac-a707-708bbfa5a3e8" width="100%" height="600" style="width: 100%; height: 600px;" controls></video>
-    </td>
-    <td align="center" width="300">
-      <b>Smali Editor</b><br>
-      <video src="https://github.com/user-attachments/assets/41870c53-7113-43d9-accf-227b45bf157a" width="100%" height="600" style="width: 100%; height: 600px;" controls></video>
-    </td>
-  </tr>
-  <tr>
-    <td align="center" width="300">
-      <b>Explorer</b></b><br>
-      <video src="https://github.com/user-attachments/assets/e03686d3-2d16-4cf9-a17f-e64298f89709" width="100%" height="600" style="width: 100%; height: 600px;" controls></video>
-    </td>
-    <td align="center" width="300">
-      <b>Smali Search</b><br>
-      <video src="https://github.com/user-attachments/assets/0737480c-8cc7-43f5-b672-660f02b9599b" width="100%" height="600" style="width: 100%; height: 600px;" controls></video>
-    </td>
-  </tr>
-  <tr>
-    <td align="center" width="300">
-      <b>Editor Functions</b><br>
-      <video src="https://github.com/user-attachments/assets/dc4bd627-9121-4a25-8170-c2db14acf817" width="100%" height="600" style="width: 100%; height: 600px;" controls></video>
-    </td>
-    <td align="center" width="300">
-      <b>Old Video</b><br>
-      <video src="https://github.com/developer-krushna/Dex-Editor-Android/assets/76234660/1ad73186-e789-44f6-bdc3-180fc3e3e0c9" width="100%" height="600" style="width: 100%; height: 600px;" controls></video>
-    </td>
-  </tr>
-</table>
-
-## Special thanks to
-- MT Manager Developer (All logics and UIs idea copied from MT Manager)
-- [Timscriptov](https://github.com/timscriptov) for helping me in the development of Smali method flow diagram, and also thanks for making server rest api …I am really indebted to him ♥️
-
-- [Sora-Editor] for a beautiful Android TextEditor (https://github.com/Rosemoe/sora-editor)
-
-- Thanks to [Android Prime](https://github.com/abodinagdat16) for helping me a lot in sora editor functionalities
-
-## Download Modder Hub
-- [Download Modder Hub](https://modder-hub.blogspot.com)
-
-## Join Telegram
-- [Coding Guys](https://t.me/coding_guys)
-  
-## Star History
-
-<a href="https://www.star-history.com/?repos=developer-krushna%2FDex-Editor-Android&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=developer-krushna/Dex-Editor-Android&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=developer-krushna/Dex-Editor-Android&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=developer-krushna/Dex-Editor-Android&type=date&legend=top-left" />
- </picture>
-</a>
-
-# License and Usage Restrictions
-
-This project is released under the Apache License, Version 2.0. However, please note the following restriction regarding the usage of this code:
-
-- You are strictly prohibited from using this code in private projects.
-- Contributions to this project are welcome within this repository only.
-
-For more details on the license terms and usage restrictions, please refer to the LICENSE file.
-
-# License
-    Copyright (C) 2024-26 Krushna Chandra
-
-    Licensed under the Apache License, Version 2.0 (the "License");
-    you may not use this file except in compliance with the License.
-    You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-    Unless required by applicable law or agreed to in writing, software
-    distributed under the License is distributed on an "AS IS" BASIS,
-    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-    See the License for the specific language governing permissions and
-    limitations under the License.
+</details>
