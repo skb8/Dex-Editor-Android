@@ -36,7 +36,12 @@ jobs:
         run: ./gradlew testDebugUnitTest --continue || true
 
       - name: Build APKs
-        run: ./gradlew assembleDebug assembleRelease buildMcpJar --stacktrace
+        run: |
+          ./gradlew assembleDebug assembleRelease buildMcpJar --stacktrace > build.log 2>&1 || {
+            echo "--- BUILD FAILED, UPLOADING LOGS ---"
+            cat build.log
+            exit 1
+          }
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4

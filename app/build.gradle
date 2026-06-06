@@ -64,10 +64,12 @@ dependencies {
 }
 
 task buildMcpJar(type: Jar) {
+    dependsOn 'compileDebugJavaWithJavac'
     archiveClassifier = 'mcp'
     
     // Добавляем скомпилированные классы из Android Java компилятора
     from fileTree(dir: 'build/intermediates/javac/debug/classes')
+    from fileTree(dir: 'build/intermediates/javac/debug/compileDebugJavaWithJavac/classes')
     
     // Добавляем зависимости из libs/
     from {
