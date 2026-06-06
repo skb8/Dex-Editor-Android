@@ -40,6 +40,35 @@ public class McpServer {
     private static LogListener logListener;
     private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
 
+    public static volatile String loadedDexPath = "";
+    private static PathChangeListener pathChangeListener;
+
+    public interface PathChangeListener {
+        void onPathChanged(String newPath);
+    }
+
+    public static synchronized void setPathChangeListener(PathChangeListener listener) {
+        pathChangeListener = listener;
+        if (listener != null && loadedDexPath != null && !loadedDexPath.isEmpty()) {
+            listener.onPathChanged(loadedDexPath);
+        }
+    }
+
+    public static synchronized void loadDexDirectly(String path) throws Exception {
+        File file = new File(path);
+        if (!file.exists()) {
+            throw new Exception("File not found: " + path);
+        }
+        loadedDexPath = file.getAbsolutePath();
+        List<String> paths = Collections.singletonList(file.getAbsolutePath());
+        String cacheDir = new File(System.getProperty("java.io.tmpdir"), "dex_mcp_cache").getAbsolutePath();
+        classTree = new ClassTree(paths, cacheDir);
+        log("DEX loaded successfully: " + loadedDexPath);
+        if (pathChangeListener != null) {
+            pathChangeListener.onPathChanged(loadedDexPath);
+        }
+    }
+
     public interface LogListener {
         void onLog(String message);
     }
@@ -263,7 +292,9 @@ public class McpServer {
         JsonObject params = req.has("params") ? req.getAsJsonObject("params") : new JsonObject();
 
         try {
-            if ("tools/list".equals(method)) {
+            if ("initialize".equals(method)) {
+                return createInitializeResponse(id);
+            } else if ("tools/list".equals(method)) {
                 return createToolsListResponse(id);
             } else if ("tools/call".equals(method)) {
                 String toolName = params.has("name") ? params.get("name").getAsString() : "";
@@ -288,6 +319,27 @@ public class McpServer {
         err.add("error", errorDetail);
         err.add("id", id);
         return gson.toJson(err);
+    }
+
+    private static String createInitializeResponse(JsonElement id) {
+        JsonObject res = new JsonObject();
+        res.addProperty("jsonrpc", "2.0");
+        res.add("id", id);
+
+        JsonObject result = new JsonObject();
+        result.addProperty("protocolVersion", "2024-11-05");
+
+        JsonObject capabilities = new JsonObject();
+        capabilities.add("tools", new JsonObject());
+        result.add("capabilities", capabilities);
+
+        JsonObject serverInfo = new JsonObject();
+        serverInfo.addProperty("name", "dex-mcp-server");
+        serverInfo.addProperty("version", "1.0.0");
+        result.add("serverInfo", serverInfo);
+
+        res.add("result", result);
+        return gson.toJson(res);
     }
 
     private static String createToolsListResponse(JsonElement id) {
@@ -490,16 +542,7 @@ public class McpServer {
                     throw new Exception("Path parameter is required");
                 }
 
-                // If path is relative or not absolute, resolve it
-                File file = new File(path);
-                if (!file.exists()) {
-                    throw new Exception("File not found: " + path);
-                }
-
-                List<String> paths = Collections.singletonList(file.getAbsolutePath());
-                // Cache dir
-                String cacheDir = new File(System.getProperty("java.io.tmpdir"), "dex_mcp_cache").getAbsolutePath();
-                classTree = new ClassTree(paths, cacheDir);
+                loadDexDirectly(path);
 
                 textObj.addProperty("text", "DEX loaded successfully.\nVersion: " + classTree.getOpenedDexVersion() + "\nTotal Classes: " + classTree.classMap.size());
             } else {

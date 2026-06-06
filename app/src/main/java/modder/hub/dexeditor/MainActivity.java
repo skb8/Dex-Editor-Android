@@ -63,6 +63,7 @@ import java.util.Map;
 
 import modder.hub.dexeditor.activity.DexEditorActivity;
 import modder.hub.dexeditor.mcp.McpServerDialog;
+import modder.hub.dexeditor.mcp.McpServer;
 import android.view.Menu;
 import android.view.MenuItem;
 import modder.hub.dexeditor.utils.DexFileSelector;
@@ -241,7 +242,54 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
 
     // Initialize app logic (currently empty)
     private void initializeLogic() {
-        // Add app logic here if needed
+        dexFilePathEditText.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
+            @Override
+            public void afterTextChanged(android.text.Editable s) {
+                final String path = s.toString().trim();
+                if (path.isEmpty()) return;
+                final File f = new File(path);
+                if (f.exists() && f.isFile()) {
+                    if (McpServer.isRunning() && !path.equals(McpServer.loadedDexPath)) {
+                        new Thread(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    McpServer.loadDexDirectly(path);
+                                } catch (Exception e) {
+                                    e.printStackTrace();
+                                }
+                            }
+                        }).start();
+                    }
+                }
+            }
+        });
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        McpServer.setPathChangeListener(new McpServer.PathChangeListener() {
+            @Override
+            public void onPathChanged(final String newPath) {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (dexFilePathEditText != null) {
+                            dexFilePathEditText.setText(newPath);
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    @Override
+    protected void onPause() {
+        McpServer.setPathChangeListener(null);
+        super.onPause();
     }
 
     // Open a file picker dialog to select a .dex file

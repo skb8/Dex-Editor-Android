@@ -57,13 +57,31 @@ public class McpServerDialog {
         statusTextView.setPadding(0, 0, 0, dpToPx(activity, 12));
         mainLayout.addView(statusTextView);
 
+        // Buttons Container
+        LinearLayout buttonsLayout = new LinearLayout(activity);
+        buttonsLayout.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams buttonsParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        buttonsParams.bottomMargin = dpToPx(activity, 16);
+        buttonsLayout.setLayoutParams(buttonsParams);
+
         // Start/Stop Button
         final MaterialButton actionButton = new MaterialButton(activity, null, com.google.android.material.R.style.Widget_MaterialComponents_Button);
         LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        btnParams.bottomMargin = dpToPx(activity, 16);
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
+        btnParams.rightMargin = dpToPx(activity, 8);
         actionButton.setLayoutParams(btnParams);
-        mainLayout.addView(actionButton);
+        buttonsLayout.addView(actionButton);
+
+        // Copy Logs Button
+        final MaterialButton copyLogsButton = new MaterialButton(activity, null, com.google.android.material.R.style.Widget_MaterialComponents_Button_TextButton);
+        LinearLayout.LayoutParams copyParams = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
+        copyLogsButton.setLayoutParams(copyParams);
+        copyLogsButton.setText("Copy Logs");
+        buttonsLayout.addView(copyLogsButton);
+
+        mainLayout.addView(buttonsLayout);
 
         // Console Log header
         TextView consoleHeader = new TextView(activity);
@@ -160,6 +178,18 @@ public class McpServerDialog {
                     } catch (Exception e) {
                         Toast.makeText(activity, "Failed to start service: " + e.getMessage(), Toast.LENGTH_LONG).show();
                     }
+                }
+            }
+        });
+
+        copyLogsButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                android.content.ClipboardManager clipboard = (android.content.ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+                android.content.ClipData clip = android.content.ClipData.newPlainText("MCP Server Logs", logBuffer.toString());
+                if (clipboard != null) {
+                    clipboard.setPrimaryClip(clip);
+                    Toast.makeText(activity, "Logs copied to clipboard", Toast.LENGTH_SHORT).show();
                 }
             }
         });
