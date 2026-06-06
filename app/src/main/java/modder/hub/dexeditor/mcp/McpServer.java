@@ -1,0 +1,716 @@
+package modder.hub.dexeditor.mcp;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
+import com.android.tools.smali.baksmali.BaksmaliOptions;
+import com.android.tools.smali.baksmali.formatter.BaksmaliWriter;
+import com.android.tools.smali.dexlib2.iface.ClassDef;
+import com.android.tools.smali.dexlib2.iface.Field;
+import com.android.tools.smali.dexlib2.iface.Method;
+import com.android.tools.smali.smali.SmaliOptions;
+import com.android.tools.smali.smali2.Smali;
+
+import modder.hub.dexeditor.utils.ClassTree;
+
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.StringWriter;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
+
+public class McpServer {
+    private static HttpServer server;
+    public static ClassTree classTree;
+    private static LogListener logListener;
+    private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
+
+    public interface LogListener {
+        void onLog(String message);
+    }
+
+    public static void setLogListener(LogListener listener) {
+        logListener = listener;
+    }
+
+    public static void main(String[] args) {
+        int port = 8788;
+        if (args.length > 0) {
+            try {
+                port = Integer.parseInt(args[0]);
+            } catch (Exception e) {
+                System.err.println("Invalid port specified: " + args[0] + ". Using default " + port);
+            }
+        }
+        try {
+            start(port);
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    stop();
+                }
+            }));
+            // Keep thread alive
+            synchronized (McpServer.class) {
+                while (isRunning()) {
+                    McpServer.class.wait();
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Failed to start server: " + e.getMessage());
+            e.printStackTrace();
+            System.exit(1);
+        }
+    }
+
+    private static void log(String msg) {
+        System.out.println("[MCP] " + msg);
+        if (logListener != null) {
+            logListener.onLog(msg);
+        }
+    }
+
+    public static synchronized void start(int port) throws IOException {
+        if (server != null) {
+            return;
+        }
+
+        server = HttpServer.create(new InetSocketAddress(port), 0);
+        server.createContext("/", new McpHandler());
+        server.createContext("/mcp", new McpHandler());
+        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
+        server.start();
+        log("Server started on port " + port);
+    }
+
+    public static synchronized void stop() {
+        if (server != null) {
+            server.stop(0);
+            server = null;
+            log("Server stopped");
+            synchronized (McpServer.class) {
+                McpServer.class.notifyAll();
+            }
+        }
+    }
+
+    public static synchronized boolean isRunning() {
+        return server != null;
+    }
+
+    private static class McpHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            log("Received request: " + exchange.getRequestMethod() + " " + exchange.getRequestURI().getPath());
+
+            // Add CORS headers for browser integrations if any
+            exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "*");
+            exchange.getResponseHeaders().add("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+            exchange.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type");
+
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(204, -1);
+                return;
+            }
+
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "Method Not Allowed. Use POST.");
+                return;
+            }
+
+            try {
+                InputStream is = exchange.getRequestBody();
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                byte[] buffer = new byte[4096];
+                int len;
+                while ((len = is.read(buffer)) != -1) {
+                    bos.write(buffer, 0, len);
+                }
+                String requestBody = bos.toString("UTF-8");
+                log("Request body: " + requestBody);
+
+                String responseBody = processRequest(requestBody);
+                log("Response body: " + responseBody);
+
+                sendResponse(exchange, 200, responseBody);
+            } catch (Exception e) {
+                log("Error: " + e.getMessage());
+                e.printStackTrace();
+                sendErrorResponse(exchange, 500, e.getMessage());
+            }
+        }
+
+        private void sendResponse(HttpExchange exchange, int status, String response) throws IOException {
+            byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(status, bytes.length);
+            OutputStream os = exchange.getResponseBody();
+            os.write(bytes);
+            os.close();
+        }
+
+        private void sendErrorResponse(HttpExchange exchange, int status, String errorMsg) throws IOException {
+            JsonObject err = new JsonObject();
+            JsonObject errorDetail = new JsonObject();
+            errorDetail.addProperty("code", -32603);
+            errorDetail.addProperty("message", errorMsg);
+            err.addProperty("jsonrpc", "2.0");
+            err.add("error", errorDetail);
+            err.add("id", null);
+            sendResponse(exchange, status, gson.toJson(err));
+        }
+    }
+
+    private static String processRequest(String requestBody) {
+        JsonElement element;
+        try {
+            element = JsonParser.parseString(requestBody);
+        } catch (Exception e) {
+            return createJsonRpcError(null, -32700, "Parse error: " + e.getMessage());
+        }
+
+        if (!element.isJsonObject()) {
+            return createJsonRpcError(null, -32600, "Invalid Request");
+        }
+
+        JsonObject req = element.getAsJsonObject();
+        JsonElement id = req.get("id");
+
+        String method = req.has("method") ? req.get("method").getAsString() : "";
+        JsonObject params = req.has("params") ? req.getAsJsonObject("params") : new JsonObject();
+
+        try {
+            if ("tools/list".equals(method)) {
+                return createToolsListResponse(id);
+            } else if ("tools/call".equals(method)) {
+                String toolName = params.has("name") ? params.get("name").getAsString() : "";
+                JsonObject arguments = params.has("arguments") ? params.getAsJsonObject("arguments") : new JsonObject();
+                return executeTool(toolName, arguments, id);
+            } else {
+                // If it's a flat method call
+                return executeTool(method, params, id);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            return createJsonRpcError(id, -32603, e.getMessage());
+        }
+    }
+
+    private static String createJsonRpcError(JsonElement id, int code, String message) {
+        JsonObject err = new JsonObject();
+        JsonObject errorDetail = new JsonObject();
+        errorDetail.addProperty("code", code);
+        errorDetail.addProperty("message", message);
+        err.addProperty("jsonrpc", "2.0");
+        err.add("error", errorDetail);
+        err.add("id", id);
+        return gson.toJson(err);
+    }
+
+    private static String createToolsListResponse(JsonElement id) {
+        JsonObject res = new JsonObject();
+        res.addProperty("jsonrpc", "2.0");
+        res.add("id", id);
+
+        JsonObject result = new JsonObject();
+        JsonArray tools = new JsonArray();
+
+        // 1. dex_load
+        JsonObject dexLoad = new JsonObject();
+        dexLoad.addProperty("name", "dex_load");
+        dexLoad.addProperty("description", "Loads one or more APK/DEX files into the editor memory.");
+        JsonObject dlParams = new JsonObject();
+        dlParams.addProperty("type", "object");
+        JsonObject dlProps = new JsonObject();
+        JsonObject pathProp = new JsonObject();
+        pathProp.addProperty("type", "string");
+        pathProp.addProperty("description", "Absolute path to the DEX or APK file");
+        dlProps.add("path", pathProp);
+        dlParams.add("properties", dlProps);
+        JsonArray dlReq = new JsonArray();
+        dlReq.add("path");
+        dlParams.add("required", dlReq);
+        dexLoad.add("inputSchema", dlParams);
+        tools.add(dexLoad);
+
+        // 2. dex_list_classes
+        JsonObject dexList = new JsonObject();
+        dexList.addProperty("name", "dex_list_classes");
+        dexList.addProperty("description", "Lists classes in the loaded DEX. Supports filtering and pagination.");
+        JsonObject lParams = new JsonObject();
+        lParams.addProperty("type", "object");
+        JsonObject lProps = new JsonObject();
+        JsonObject filterProp = new JsonObject();
+        filterProp.addProperty("type", "string");
+        filterProp.addProperty("description", "Filter by class name or package (e.g. 'com.example')");
+        JsonObject limitProp = new JsonObject();
+        limitProp.addProperty("type", "integer");
+        limitProp.addProperty("description", "Limit results count");
+        JsonObject offsetProp = new JsonObject();
+        offsetProp.addProperty("type", "integer");
+        offsetProp.addProperty("description", "Offset for pagination");
+        lProps.add("filter", filterProp);
+        lProps.add("limit", limitProp);
+        lProps.add("offset", offsetProp);
+        lParams.add("properties", lProps);
+        dexList.add("inputSchema", lParams);
+        tools.add(dexList);
+
+        // 3. dex_get_class_outline
+        JsonObject dexOutline = new JsonObject();
+        dexOutline.addProperty("name", "dex_get_class_outline");
+        dexOutline.addProperty("description", "Returns the outlines (field & method signatures) of a class without method bodies.");
+        JsonObject oParams = new JsonObject();
+        oParams.addProperty("type", "object");
+        JsonObject oProps = new JsonObject();
+        JsonObject clsNameProp = new JsonObject();
+        clsNameProp.addProperty("type", "string");
+        clsNameProp.addProperty("description", "Full class signature name (e.g. 'Lcom/example/MainActivity;')");
+        oProps.add("className", clsNameProp);
+        oParams.add("properties", oProps);
+        JsonArray oReq = new JsonArray();
+        oReq.add("className");
+        oParams.add("required", oReq);
+        dexOutline.add("inputSchema", oParams);
+        tools.add(dexOutline);
+
+        // 4. dex_get_method
+        JsonObject dexGetMethod = new JsonObject();
+        dexGetMethod.addProperty("name", "dex_get_method");
+        dexGetMethod.addProperty("description", "Extracts and returns the Smali code of a specific method.");
+        JsonObject gmParams = new JsonObject();
+        gmParams.addProperty("type", "object");
+        JsonObject gmProps = new JsonObject();
+        gmProps.add("className", clsNameProp);
+        JsonObject mNameProp = new JsonObject();
+        mNameProp.addProperty("type", "string");
+        mNameProp.addProperty("description", "Method name");
+        gmProps.add("methodName", mNameProp);
+        gmParams.add("properties", gmProps);
+        JsonArray gmReq = new JsonArray();
+        gmReq.add("className");
+        gmReq.add("methodName");
+        gmParams.add("required", gmReq);
+        dexGetMethod.add("inputSchema", gmParams);
+        tools.add(dexGetMethod);
+
+        // 5. dex_search
+        JsonObject dexSearch = new JsonObject();
+        dexSearch.addProperty("name", "dex_search");
+        dexSearch.addProperty("description", "Search in DEX pool by class, method, field, string, or code.");
+        JsonObject sParams = new JsonObject();
+        sParams.addProperty("type", "object");
+        JsonObject sProps = new JsonObject();
+        JsonObject qProp = new JsonObject();
+        qProp.addProperty("type", "string");
+        qProp.addProperty("description", "Query string");
+        JsonObject tProp = new JsonObject();
+        tProp.addProperty("type", "string");
+        tProp.addProperty("description", "Type of search: class, method, field, string, or code");
+        sProps.add("query", qProp);
+        sProps.add("type", tProp);
+        sParams.add("properties", sProps);
+        JsonArray sReq = new JsonArray();
+        sReq.add("query");
+        sReq.add("type");
+        sParams.add("required", sReq);
+        dexSearch.add("inputSchema", sParams);
+        tools.add(dexSearch);
+
+        // 6. dex_replace_in_method
+        JsonObject dexReplInMethod = new JsonObject();
+        dexReplInMethod.addProperty("name", "dex_replace_in_method");
+        dexReplInMethod.addProperty("description", "Replaces a specific string inside a method's Smali body, compiles, and saves updates.");
+        JsonObject rimParams = new JsonObject();
+        rimParams.addProperty("type", "object");
+        JsonObject rimProps = new JsonObject();
+        rimProps.add("className", clsNameProp);
+        rimProps.add("methodName", mNameProp);
+        JsonObject oldStrProp = new JsonObject();
+        oldStrProp.addProperty("type", "string");
+        oldStrProp.addProperty("description", "Original unique Smali code substring in method");
+        JsonObject newStrProp = new JsonObject();
+        newStrProp.addProperty("type", "string");
+        newStrProp.addProperty("description", "Replacement Smali code substring");
+        rimProps.add("old_str", oldStrProp);
+        rimProps.add("new_str", newStrProp);
+        rimParams.add("properties", rimProps);
+        JsonArray rimReq = new JsonArray();
+        rimReq.add("className");
+        rimReq.add("methodName");
+        rimReq.add("old_str");
+        rimReq.add("new_str");
+        rimParams.add("required", rimReq);
+        dexReplInMethod.add("inputSchema", rimParams);
+        tools.add(dexReplInMethod);
+
+        // 7. dex_replace_method
+        JsonObject dexReplMethod = new JsonObject();
+        dexReplMethod.addProperty("name", "dex_replace_method");
+        dexReplMethod.addProperty("description", "Replaces the entire body of a method.");
+        JsonObject rmParams = new JsonObject();
+        rmParams.addProperty("type", "object");
+        JsonObject rmProps = new JsonObject();
+        rmProps.add("className", clsNameProp);
+        rmProps.add("methodName", mNameProp);
+        JsonObject smaliProp = new JsonObject();
+        smaliProp.addProperty("type", "string");
+        smaliProp.addProperty("description", "New full Smali code of the method, including .method and .end method");
+        rmProps.add("smali", smaliProp);
+        rmParams.add("properties", rmProps);
+        JsonArray rmReq = new JsonArray();
+        rmReq.add("className");
+        rmReq.add("methodName");
+        rmReq.add("smali");
+        rmParams.add("required", rmReq);
+        dexReplMethod.add("inputSchema", rmParams);
+        tools.add(dexReplMethod);
+
+        // 8. dex_save
+        JsonObject dexSave = new JsonObject();
+        dexSave.addProperty("name", "dex_save");
+        dexSave.addProperty("description", "Compiles all modified classes and saves to the output path.");
+        JsonObject svParams = new JsonObject();
+        svParams.addProperty("type", "object");
+        JsonObject svProps = new JsonObject();
+        JsonObject outPathProp = new JsonObject();
+        outPathProp.addProperty("type", "string");
+        outPathProp.addProperty("description", "Output absolute file path. If omitted, overwrites loaded file.");
+        JsonObject debugProp = new JsonObject();
+        debugProp.addProperty("type", "boolean");
+        debugProp.addProperty("description", "Strip debug info");
+        svProps.add("outputPath", outPathProp);
+        svProps.add("stripDebug", debugProp);
+        svParams.add("properties", svProps);
+        dexSave.add("inputSchema", svParams);
+        tools.add(dexSave);
+
+        result.add("tools", tools);
+        res.add("result", result);
+        return gson.toJson(res);
+    }
+
+    private static String executeTool(String toolName, JsonObject args, JsonElement id) throws Exception {
+        JsonObject res = new JsonObject();
+        res.addProperty("jsonrpc", "2.0");
+        res.add("id", id);
+
+        JsonObject result = new JsonObject();
+        JsonArray content = new JsonArray();
+        JsonObject textObj = new JsonObject();
+        textObj.addProperty("type", "text");
+
+        try {
+            if ("dex_load".equals(toolName)) {
+                String path = args.has("path") ? args.get("path").getAsString() : "";
+                if (path.isEmpty()) {
+                    throw new Exception("Path parameter is required");
+                }
+
+                // If path is relative or not absolute, resolve it
+                File file = new File(path);
+                if (!file.exists()) {
+                    throw new Exception("File not found: " + path);
+                }
+
+                List<String> paths = Collections.singletonList(file.getAbsolutePath());
+                // Cache dir
+                String cacheDir = new File(System.getProperty("java.io.tmpdir"), "dex_mcp_cache").getAbsolutePath();
+                classTree = new ClassTree(paths, cacheDir);
+
+                textObj.addProperty("text", "DEX loaded successfully.\nVersion: " + classTree.getOpenedDexVersion() + "\nTotal Classes: " + classTree.classMap.size());
+            } else {
+                // All other tools require classTree to be loaded
+                if (classTree == null) {
+                    throw new Exception("No DEX file is currently loaded. Call 'dex_load' first.");
+                }
+
+                if ("dex_list_classes".equals(toolName)) {
+                    String filter = args.has("filter") ? args.get("filter").getAsString() : "";
+                    int limit = args.has("limit") ? args.get("limit").getAsInt() : 1000;
+                    int offset = args.has("offset") ? args.get("offset").getAsInt() : 0;
+
+                    List<String> matched = new ArrayList<>();
+                    for (String key : classTree.classMap.keySet()) {
+                        String classSig = "L" + key + ";";
+                        if (filter.isEmpty() || classSig.contains(filter) || key.contains(filter)) {
+                            matched.add(classSig);
+                        }
+                    }
+                    Collections.sort(matched);
+
+                    int total = matched.size();
+                    int end = Math.min(offset + limit, total);
+                    List<String> sub = (offset < total) ? matched.subList(offset, end) : Collections.emptyList();
+
+                    JsonObject listResult = new JsonObject();
+                    listResult.addProperty("total", total);
+                    listResult.addProperty("offset", offset);
+                    listResult.addProperty("limit", limit);
+                    JsonArray arr = new JsonArray();
+                    for (String s : sub) {
+                        arr.add(s);
+                    }
+                    listResult.add("classes", arr);
+
+                    textObj.addProperty("text", gson.toJson(listResult));
+                } else if ("dex_get_class_outline".equals(toolName)) {
+                    String className = args.has("className") ? args.get("className").getAsString() : "";
+                    ClassDef classDef = findClassDef(className);
+
+                    StringBuilder outline = new StringBuilder();
+                    outline.append(".class ").append(classDef.getType()).append("\n");
+                    outline.append(".super ").append(classDef.getSuperclass()).append("\n\n");
+
+                    outline.append("# Fields\n");
+                    for (Field field : classDef.getFields()) {
+                        outline.append(".field ");
+                        // Access flags or just simple outline
+                        outline.append(field.getName()).append(":").append(field.getType()).append("\n");
+                    }
+
+                    outline.append("\n# Methods\n");
+                    for (Method method : classDef.getMethods()) {
+                        outline.append(".method ").append(method.getName()).append("(");
+                        for (CharSequence param : method.getParameterTypes()) {
+                            outline.append(param);
+                        }
+                        outline.append(")").append(method.getReturnType()).append("\n");
+                    }
+
+                    textObj.addProperty("text", outline.toString());
+                } else if ("dex_get_method".equals(toolName)) {
+                    String className = args.has("className") ? args.get("className").getAsString() : "";
+                    String methodName = args.has("methodName") ? args.get("methodName").getAsString() : "";
+                    ClassDef classDef = findClassDef(className);
+
+                    String smali = getPureSmali(classDef);
+                    String methodSmali = extractMethod(smali, methodName);
+                    if (methodSmali == null) {
+                        throw new Exception("Method '" + methodName + "' not found in class " + className);
+                    }
+                    textObj.addProperty("text", methodSmali);
+                } else if ("dex_search".equals(toolName)) {
+                    String query = args.has("query") ? args.get("query").getAsString() : "";
+                    String type = args.has("type") ? args.get("type").getAsString() : "";
+
+                    List<String> resultsList = new ArrayList<>();
+
+                    for (ClassDef classDef : classTree.classMap.values()) {
+                        String classSig = classDef.getType();
+                        if ("class".equalsIgnoreCase(type)) {
+                            if (classSig.contains(query)) {
+                                resultsList.add("Class: " + classSig);
+                            }
+                        } else if ("method".equalsIgnoreCase(type)) {
+                            for (Method method : classDef.getMethods()) {
+                                if (method.getName().contains(query)) {
+                                    resultsList.add("Method in " + classSig + " -> " + method.getName());
+                                }
+                            }
+                        } else if ("field".equalsIgnoreCase(type)) {
+                            for (Field field : classDef.getFields()) {
+                                if (field.getName().contains(query)) {
+                                    resultsList.add("Field in " + classSig + " -> " + field.getName());
+                                }
+                            }
+                        } else if ("string".equalsIgnoreCase(type) || "code".equalsIgnoreCase(type)) {
+                            // Search inside method bodies or string references.
+                            // Simply disassemble class and check
+                            String smali = getPureSmali(classDef);
+                            if (smali.contains(query)) {
+                                resultsList.add("Match in " + classSig);
+                            }
+                        }
+                        // Limit results to avoid memory bloating
+                        if (resultsList.size() >= 200) {
+                            resultsList.add("...and more matches (truncated to 200)");
+                            break;
+                        }
+                    }
+
+                    StringBuilder sb = new StringBuilder();
+                    if (resultsList.isEmpty()) {
+                        sb.append("No matches found.");
+                    } else {
+                        for (String r : resultsList) {
+                            sb.append(r).append("\n");
+                        }
+                    }
+                    textObj.addProperty("text", sb.toString());
+                } else if ("dex_replace_in_method".equals(toolName)) {
+                    String className = args.has("className") ? args.get("className").getAsString() : "";
+                    String methodName = args.has("methodName") ? args.get("methodName").getAsString() : "";
+                    String oldStr = args.has("old_str") ? args.get("old_str").getAsString() : "";
+                    String newStr = args.has("new_str") ? args.get("new_str").getAsString() : "";
+
+                    ClassDef classDef = findClassDef(className);
+                    String classSmali = getPureSmali(classDef);
+                    String methodSmali = extractMethod(classSmali, methodName);
+                    if (methodSmali == null) {
+                        throw new Exception("Method '" + methodName + "' not found in class " + className);
+                    }
+
+                    if (!methodSmali.contains(oldStr)) {
+                        throw new Exception("Method body does not contain old_str");
+                    }
+
+                    String updatedMethodSmali = methodSmali.replace(oldStr, newStr);
+                    String updatedClassSmali = classSmali.replace(methodSmali, updatedMethodSmali);
+
+                    // Compile and Save
+                    ClassDef assembled = Smali.assemble(updatedClassSmali, new SmaliOptions(), classTree.getOpenedDexVersion());
+                    classTree.saveClassDef(assembled);
+
+                    textObj.addProperty("text", "Successfully replaced code and reassembled class: " + className);
+                } else if ("dex_replace_method".equals(toolName)) {
+                    String className = args.has("className") ? args.get("className").getAsString() : "";
+                    String methodName = args.has("methodName") ? args.get("methodName").getAsString() : "";
+                    String newMethodSmali = args.has("smali") ? args.get("smali").getAsString() : "";
+
+                    ClassDef classDef = findClassDef(className);
+                    String classSmali = getPureSmali(classDef);
+                    String methodSmali = extractMethod(classSmali, methodName);
+                    if (methodSmali == null) {
+                        throw new Exception("Method '" + methodName + "' not found in class " + className);
+                    }
+
+                    String updatedClassSmali = classSmali.replace(methodSmali, newMethodSmali);
+
+                    // Compile and Save
+                    ClassDef assembled = Smali.assemble(updatedClassSmali, new SmaliOptions(), classTree.getOpenedDexVersion());
+                    classTree.saveClassDef(assembled);
+
+                    textObj.addProperty("text", "Successfully replaced entire method and reassembled class: " + className);
+                } else if ("dex_save".equals(toolName)) {
+                    String outPath = args.has("outputPath") ? args.get("outputPath").getAsString() : "";
+                    boolean stripDebug = args.has("stripDebug") && args.get("stripDebug").getAsBoolean();
+
+                    if (!outPath.isEmpty()) {
+                        // Change output destination in classTree paths if specified
+                        classTree.paths.set(0, outPath);
+                    }
+
+                    ClassTree.CompilationOptions opts = new ClassTree.CompilationOptions();
+                    if (stripDebug) {
+                        opts.removeAllDebug = true;
+                    }
+                    classTree.setCompilationOptions(opts);
+
+                    final StringBuilder progressLog = new StringBuilder();
+                    classTree.saveAllDexFiles(new ClassTree.DexSaveProgress() {
+                        @Override
+                        public void onProgress(int progress, int total) {
+                            log("Save progress: " + progress + "/" + total);
+                        }
+
+                        @Override
+                        public void onTitle(String title) {
+                            log("Saving: " + title);
+                        }
+
+                        @Override
+                        public void onMessage(String msg) {
+                            log("Save msg: " + msg);
+                            progressLog.append(msg).append("\n");
+                        }
+                    });
+
+                    textObj.addProperty("text", "DEX files saved successfully.\n" + progressLog.toString());
+                } else {
+                    throw new Exception("Unknown tool: " + toolName);
+                }
+            }
+        } catch (Exception e) {
+            textObj.addProperty("text", "Error executing " + toolName + ": " + e.getMessage());
+        }
+
+        content.add(textObj);
+        result.add("content", content);
+        res.add("result", result);
+        return gson.toJson(res);
+    }
+
+    public static List<String> getIpAddresses() {
+        List<String> ipList = new ArrayList<>();
+        try {
+            for (java.util.Enumeration<java.net.NetworkInterface> en = java.net.NetworkInterface.getNetworkInterfaces(); en.hasMoreElements();) {
+                java.net.NetworkInterface intf = en.nextElement();
+                for (java.util.Enumeration<java.net.InetAddress> enumIpAddr = intf.getInetAddresses(); enumIpAddr.hasMoreElements();) {
+                    java.net.InetAddress inetAddress = enumIpAddr.nextElement();
+                    if (!inetAddress.isLoopbackAddress() && inetAddress instanceof java.net.Inet4Address) {
+                        ipList.add(inetAddress.getHostAddress());
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        return ipList;
+    }
+
+    private static ClassDef findClassDef(String className) throws Exception {
+        String key = className;
+        if (key.startsWith("L") && key.endsWith(";")) {
+            key = key.substring(1, key.length() - 1);
+        }
+        ClassDef classDef = classTree.classMap.get(key);
+        if (classDef == null) {
+            throw new Exception("Class not found: " + className);
+        }
+        return classDef;
+    }
+
+    private static String getPureSmali(ClassDef classDef) throws Exception {
+        // If we have modified class in pending map, use it
+        String key = classDef.getType();
+        String typeKey = key.substring(1, key.length() - 1);
+        if (classTree.getPendingSmaliMap().containsKey(typeKey)) {
+            return classTree.getPendingSmaliMap().get(typeKey);
+        }
+
+        StringWriter sw = new StringWriter();
+        BaksmaliWriter bw = new BaksmaliWriter(sw);
+        new com.android.tools.smali.baksmali.Adaptors.ClassDefinition(new BaksmaliOptions(), classDef).writeTo(bw);
+        bw.close();
+        return sw.toString();
+    }
+
+    private static String extractMethod(String smaliCode, String methodName) {
+        String[] lines = smaliCode.split("\n");
+        StringBuilder sb = null;
+        boolean inMethod = false;
+
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith(".method ") && trimmed.contains(" " + methodName + "(")) {
+                sb = new StringBuilder();
+                inMethod = true;
+            }
+
+            if (inMethod) {
+                sb.append(line).append("\n");
+                if (trimmed.startsWith(".end method")) {
+                    break;
+                }
+            }
+        }
+
+        return (sb != null) ? sb.toString() : null;
+    }
+}

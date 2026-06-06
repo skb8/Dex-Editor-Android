@@ -62,3 +62,35 @@ dependencies {
     androidTestImplementation 'androidx.test.ext:junit:1.3.0'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.7.0'
 }
+
+task buildMcpJar(type: Jar) {
+    archiveClassifier = 'mcp'
+    
+    // Добавляем скомпилированные классы из Android Java компилятора
+    from fileTree(dir: 'build/intermediates/javac/debug/classes')
+    
+    // Добавляем зависимости из libs/
+    from {
+        fileTree(dir: 'libs', include: ['*.jar']).collect { zipTree(it) }
+    }
+    
+    // Добавляем внешние зависимости, например gson и guava.
+    // Мы можем получить их из classpath конфигурации
+    from {
+        configurations.debugRuntimeClasspath.findAll { it.name.endsWith('.jar') }.collect {
+            // Исключаем Android-специфичные библиотеки, чтобы уменьшить размер и избежать конфликтов
+            if (!it.name.contains('android') && !it.name.contains('appcompat') && !it.name.contains('material') && !it.name.contains('sora-editor')) {
+                return zipTree(it)
+            }
+            return null
+        }
+    }
+    
+    manifest {
+        attributes 'Main-Class': 'modder.hub.dexeditor.mcp.McpServer'
+    }
+    
+    // Исключаем лишние ресурсы и метаданные
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
+    exclude 'android/**', 'androidx/**'
+}

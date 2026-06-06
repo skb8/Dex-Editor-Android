@@ -62,6 +62,9 @@ import java.util.List;
 import java.util.Map;
 
 import modder.hub.dexeditor.activity.DexEditorActivity;
+import modder.hub.dexeditor.mcp.McpServerDialog;
+import android.view.Menu;
+import android.view.MenuItem;
 import modder.hub.dexeditor.utils.DexFileSelector;
 import modder.hub.dexeditor.utils.FilePermissionManager;
 import modder.hub.dexeditor.utils.FileUtil;
@@ -276,5 +279,21 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
         });
 
         filePickerDialog.show();
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        menu.add(0, 100, 0, "MCP Server")
+            .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == 100) {
+            McpServerDialog.show(this);
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
     }
 }
