@@ -385,12 +385,18 @@ public class McpServer {
         JsonObject dlProps = new JsonObject();
         JsonObject pathProp = new JsonObject();
         pathProp.addProperty("type", "string");
-        pathProp.addProperty("description", "Absolute path to the DEX or APK file");
+        pathProp.addProperty("description", "Absolute path(s) to the DEX or APK file(s). You can specify multiple files separated by a semicolon (;)");
         dlProps.add("path", pathProp);
+        
+        JsonObject pathsProp = new JsonObject();
+        pathsProp.addProperty("type", "array");
+        pathsProp.addProperty("description", "Array of absolute paths to the DEX or APK files");
+        JsonObject itemsProp = new JsonObject();
+        itemsProp.addProperty("type", "string");
+        pathsProp.add("items", itemsProp);
+        dlProps.add("paths", pathsProp);
+        
         dlParams.add("properties", dlProps);
-        JsonArray dlReq = new JsonArray();
-        dlReq.add("path");
-        dlParams.add("required", dlReq);
         dexLoad.add("inputSchema", dlParams);
         tools.add(dexLoad);
 
