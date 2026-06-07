@@ -1,39 +1,71 @@
 # Dex-Editor-Android + MCP Server (Fork)
 
-Это форк оригинального проекта advanced Android DEX file editor, в который добавлена поддержка **MCP (Model Context Protocol)**. 
+> 🇷🇺 **[Читайте на русском](README.ru.md)**
 
-Этот форк позволяет подключить вашего локального ИИ-агента (например, Claude Desktop, Pi или любой другой MCP-клиент) напрямую к вашему Android-устройству для чтения, поиска, модификации и сборки DEX/APK файлов.
+This is a fork of the original advanced Android DEX file editor project, with added support for **MCP (Model Context Protocol)**. 
+
+This fork allows you to connect your local AI agent (like Claude Desktop, Pi, or any other MCP client) directly to your Android device to read, search, modify, and build DEX/APK files.
 
 ---
 
-## 🚀 Новые возможности в этом форке
+## 🚀 New Features in this Fork
 
-- **Встроенный MCP HTTP Сервер**: Работает внутри фоновой службы Android (`McpService`) с Foreground-уведомлением. Сервер не отключается при сворачивании приложения.
-- **Инструменты для LLM агента (Tools)**:
-  - `dex_load` — Загрузка DEX/APK файлов (включая мульти-декс через перечисление путей).
-  - `dex_list_classes` — Получение списка классов с фильтрацией и постраничной навигацией.
-  - `dex_get_class_outline` — Получение сигнатур полей и методов (без тел методов) для экономии контекста модели.
-  - `dex_get_method` — Чтение Smali-кода одного конкретного метода.
-  - `dex_get_java` — Декомпиляция Smali класса в полноценный Java-код через встроенный JADX.
-  - `dex_search` — Быстрый поиск в пуле по классам, методам, полям, строкам или коду.
-  - `dex_find_usages` — Глубокий поиск Xref (кто вызывает метод, обращается к полю, наследует класс).
-  - `dex_replace_in_method` — Умная точечная замена подстроки в методе (`str_replace` подход) с моментальной проверкой компилятора.
-  - `dex_replace_method` — Полная замена тела метода.
-  - `dex_create_class` — Создание и компиляция абсолютно нового класса с нуля из Smali кода.
-  - `dex_remove_class` — Удаление (вырезание) класса из DEX.
-  - `dex_save` — Сборка и сохранение только измененных файлов на диск.
-- **Двусторонняя синхронизация**:
-  - Если LLM-агент загружает файл через `dex_load`, путь к нему тут же отображается на главном экране приложения.
-  - Если пользователь сам выбирает файл на главном экране приложения (через встроенный проводник или вставкой пути), и MCP сервер при этом запущен, файл автоматически загружается в память сервера.
-- **Контроль и логирование в UI**:
-  - Кнопка **MCP Server** добавлена в меню главного экрана.
-  - Панель управления позволяет задать порт, запустить/остановить службу, скопировать логи в буфер обмена одной кнопкой и просматривать входящие запросы от модели и сообщения компилятора в реальном времени.
+- **Built-in MCP HTTP Server**: Runs inside a background Android Service (`McpService`) with a Foreground notification. The server does not disconnect when the app is minimized.
+- **Tools for LLM Agent**:
+  - `dex_load` — Load DEX/APK files (including multi-dex via paths array).
+  - `dex_list_classes` — Get a list of classes with filtering and pagination.
+  - `dex_get_class_outline` — Get field and method signatures (without method bodies) to save model context window.
+  - `dex_get_method` — Read Smali code of a single specific method.
+  - `dex_get_java` — Decompile a Smali class into fully readable Java code using the built-in JADX decompiler.
+  - `dex_search` — Fast pool search by classes, methods, fields, strings, or code.
+  - `dex_find_usages` — Deep Xref search (who calls a method, accesses a field, or extends a class).
+  - `dex_replace_in_method` — Smart precise string replacement in a method (`str_replace` approach) with instant compiler verification.
+  - `dex_replace_method` — Full replacement of a method body.
+  - `dex_create_class` — Create and compile an entirely new class from scratch using Smali code.
+  - `dex_remove_class` — Completely remove a class from the DEX.
+  - `dex_save` — Compile and save only modified files to disk.
+- **Two-way Synchronization**:
+  - If the LLM agent loads a file via `dex_load`, its path is immediately displayed on the app's main screen.
+  - If the user selects a file on the main screen (via the built-in file picker or by pasting the path) while the MCP server is running, the file is automatically loaded into the server's memory.
+- **UI Control and Logging**:
+  - An **MCP Server** button is added to the main screen menu.
+  - The control panel allows you to set the port, start/stop the service, copy logs to clipboard with one click, and view incoming requests from the model and compiler messages in real time.
 
+---
+
+## 🛠 Setup and Usage
+
+1. **Starting the server**:
+   - Install the built APK on your phone.
+   - Open the app, tap the three dots (or gear icon) in the top right corner $\rightarrow$ **MCP Server**.
+   - Specify the port (default `8788`) and tap **Start Server**.
+   - A notification will appear in the status bar, and available IP addresses will be shown in the log console.
+
+2. **Connecting from PC (via ADB)**:
+   - Connect your phone to your computer via USB and forward the ports:
+     ```bash
+     adb forward tcp:8788 tcp:8788
+     ```
+   - Now the server is available on your computer at `http://127.0.0.1:8788/mcp`.
+
+3. **Client Configuration (e.g., Claude Desktop)**:
+   Add the server to your `claude_desktop_config.json` configuration file:
+   ```json
+   {
+     "mcpServers": {
+       "dex-editor-mcp": {
+         "command": "curl",
+         "args": ["-s", "-X", "POST", "-H", "Content-Type: application/json", "-d", "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1}", "http://127.0.0.1:8788/mcp"]
+       }
+     }
+   }
+   ```
+   *(Or use any HTTP transport client for MCP).*
 
 ---
 
 <details>
-<summary><b>Оригинальное описание проекта (Original README)</b></summary>
+<summary><b>Original Project Description (Original README)</b></summary>
 
 ## My first open source Project 😀🇮🇳
 # Dex-Editor-Android
