@@ -170,18 +170,11 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
         toolbar = findViewById(R.id._toolbar);
         setSupportActionBar(toolbar);
 
-        // Enable back button in the toolbar
+        // Disable back button in the toolbar for MainActivity
         if (getSupportActionBar() != null) {
-            getSupportActionBar().setDisplayHomeAsUpEnabled(true);
-            getSupportActionBar().setHomeButtonEnabled(true);
+            getSupportActionBar().setDisplayHomeAsUpEnabled(false);
+            getSupportActionBar().setHomeButtonEnabled(false);
         }
-
-        toolbar.setNavigationOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                onBackPressed();
-            }
-        });
 
         textInputLayout = findViewById(R.id.textinput1);
         pickDexFileButton = findViewById(R.id.materialbutton1);
