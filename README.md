@@ -33,22 +33,28 @@ This fork allows you to connect your local AI agent (like Claude Desktop, Pi, or
 
 ---
 
-## 🛠 Setup and Usage
+## 🛠 Usage
 
 1. **Starting the server**:
-   - Install the built APK on your phone.
-   - Open the app, tap the three dots (or gear icon) in the top right corner $\rightarrow$ **MCP Server**.
+   - Install the built APK from the [Releases](https://github.com/skb8/Dex-Editor-Android/releases) page.
+   - Open the app, tap the three dots in the top right corner $\rightarrow$ **MCP Server**.
    - Specify the port (default `8788`) and tap **Start Server**.
-   - A notification will appear in the status bar, and available IP addresses will be shown in the log console.
 
-2. **Connecting from PC (via ADB)**:
-   - Connect your phone to your computer via USB and forward the ports:
+2. **Connecting from PC (via ADB / Localhost)**:
+   - Connect your phone via USB and forward the port:
      ```bash
      adb forward tcp:8788 tcp:8788
      ```
-   - Now the server is available on your computer at `http://127.0.0.1:8788/mcp`.
+   - The server is now available on your computer via HTTP at `http://127.0.0.1:8788/mcp`.
 
-3. **Client Configuration (e.g., Claude Desktop)**:
+3. **Connecting via HTTPS (Over Internet)**:
+   If you want to expose the server over a secure **HTTPS** connection (e.g., to connect a remote AI agent without ADB), use a tunnel tool like `ngrok` or `localtunnel` on your phone (via Termux) or PC:
+   ```bash
+   ngrok http 8788
+   ```
+   This will give you a secure `https://...ngrok.app/mcp` endpoint with a valid SSL certificate.
+
+4. **Client Configuration (e.g., Claude Desktop)**:
    Add the server to your `claude_desktop_config.json` configuration file:
    ```json
    {
@@ -60,7 +66,6 @@ This fork allows you to connect your local AI agent (like Claude Desktop, Pi, or
      }
    }
    ```
-   *(Or use any HTTP transport client for MCP).*
 
 ---
 
