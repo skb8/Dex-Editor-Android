@@ -598,7 +598,6 @@ public class ClassTree {
                             }
                             
                             int p = processed.incrementAndGet();
-                            dexSaveProgress.onMessage("Compiling...");
                             if (p % 100 == 0 || p == classCount) {
                                 dexSaveProgress.onProgress(p, classCount);
                             }

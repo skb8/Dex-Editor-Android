@@ -56,6 +56,11 @@ import java.util.List;
 import java.util.Map;
 
 import modder.hub.dexeditor.activity.DexEditorActivity;
+import modder.hub.dexeditor.mcp.McpServerDialog;
+import modder.hub.dexeditor.mcp.McpServer;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.content.Context;
 import modder.hub.dexeditor.utils.DexFileSelector;
 import modder.hub.dexeditor.utils.FilePermissionManager;
 import modder.hub.dexeditor.utils.FileUtil;
@@ -154,18 +159,11 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
         toolbar = findViewById(R.id._toolbar);
         setSupportActionBar(toolbar);
 
-        // Enable back button in the toolbar
+        // Disable back button in the toolbar for MainActivity
         if (getSupportActionBar() != null) {
-            getSupportActionBar().setDisplayHomeAsUpEnabled(true);
-            getSupportActionBar().setHomeButtonEnabled(true);
+            getSupportActionBar().setDisplayHomeAsUpEnabled(false);
+            getSupportActionBar().setHomeButtonEnabled(false);
         }
-
-        toolbar.setNavigationOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                onBackPressed();
-            }
-        });
 
         pickDexFileButton = findViewById(R.id.materialbutton1);
         openDexFileButton = findViewById(R.id.open_dex);
@@ -192,10 +190,26 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
                     return;
                 }
                 String initialPath = dexFilePathEditText.getText().toString();
+                if (initialPath.contains(";")) {
+                    initialPath = initialPath.split(";")[0];
+                }
                 DexFileSelector dexSelector = new DexFileSelector(MainActivity.this, initialPath);
                 dexSelector.setOnFilesSelectedListener(new DexFileSelector.OnFilesSelectedListener() {
                     @Override
-                    public void onFilesSelected(List<String> selectedFilePaths) {
+                    public void onFilesSelected(final List<String> selectedFilePaths) {
+                        if (McpServer.isRunning()) {
+                            new Thread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    try {
+                                        McpServer.loadDexDirectly(selectedFilePaths);
+                                    } catch (Exception e) {
+                                        e.printStackTrace();
+                                    }
+                                }
+                            }).start();
+                        }
+
                         // Convert List<String> to ArrayList<String> (if needed for Intent)
                         ArrayList<String> filePathsArrayList = new ArrayList<String>(selectedFilePaths);
 
@@ -263,5 +277,45 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
         });
 
         filePickerDialog.show();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        McpServer.setPathChangeListener(new McpServer.PathChangeListener() {
+            @Override
+            public void onPathChanged(final String newPath) {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (dexFilePathEditText != null) {
+                            dexFilePathEditText.setText(newPath);
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    @Override
+    protected void onPause() {
+        McpServer.setPathChangeListener(null);
+        super.onPause();
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        menu.add(0, 100, 0, "MCP Server")
+            .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == 100) {
+            McpServerDialog.show(this);
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
     }
 }
