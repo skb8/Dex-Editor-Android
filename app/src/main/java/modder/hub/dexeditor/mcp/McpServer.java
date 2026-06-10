@@ -80,11 +80,13 @@ public class McpServer {
         List<String> resolved = new ArrayList<>();
         for (String p : paths) {
             File f = new File(p);
-            if (f.exists()) {
-                resolved.add(f.getAbsolutePath());
-            } else {
+            if (!f.exists()) {
                 throw new Exception("File not found: " + p);
             }
+            if (!f.isFile() || !f.getName().toLowerCase(java.util.Locale.US).endsWith(".dex")) {
+                throw new Exception("Only .dex files are supported by MCP: " + p);
+            }
+            resolved.add(f.getAbsolutePath());
         }
         loadedDexPath = String.join(";", resolved);
         String cacheDir = new File(System.getProperty("java.io.tmpdir"), "dex_mcp_cache").getAbsolutePath();
@@ -396,18 +398,18 @@ public class McpServer {
         // 1. dex_load
         JsonObject dexLoad = new JsonObject();
         dexLoad.addProperty("name", "dex_load");
-        dexLoad.addProperty("description", "Loads one or more APK/DEX files into the editor memory.");
+        dexLoad.addProperty("description", "Loads one or more DEX files into the editor memory.");
         JsonObject dlParams = new JsonObject();
         dlParams.addProperty("type", "object");
         JsonObject dlProps = new JsonObject();
         JsonObject pathProp = new JsonObject();
         pathProp.addProperty("type", "string");
-        pathProp.addProperty("description", "Absolute path(s) to the DEX or APK file(s). You can specify multiple files separated by a semicolon (;)");
+        pathProp.addProperty("description", "Absolute path(s) to the DEX file(s). You can specify multiple files separated by a semicolon (;)");
         dlProps.add("path", pathProp);
         
         JsonObject pathsProp = new JsonObject();
         pathsProp.addProperty("type", "array");
-        pathsProp.addProperty("description", "Array of absolute paths to the DEX or APK files");
+        pathsProp.addProperty("description", "Array of absolute paths to DEX files");
         JsonObject itemsProp = new JsonObject();
         itemsProp.addProperty("type", "string");
         pathsProp.add("items", itemsProp);
@@ -470,10 +472,13 @@ public class McpServer {
         mNameProp.addProperty("type", "string");
         mNameProp.addProperty("description", "Method name");
         gmProps.add("methodName", mNameProp);
+        JsonObject mSigProp = new JsonObject();
+        mSigProp.addProperty("type", "string");
+        mSigProp.addProperty("description", "Full method signature, e.g. Lcom/pkg/Cls;->methodName(I)Z. Required when methodName is overloaded.");
+        gmProps.add("methodSignature", mSigProp);
         gmParams.add("properties", gmProps);
         JsonArray gmReq = new JsonArray();
         gmReq.add("className");
-        gmReq.add("methodName");
         gmParams.add("required", gmReq);
         dexGetMethod.add("inputSchema", gmParams);
         tools.add(dexGetMethod);
@@ -510,6 +515,7 @@ public class McpServer {
         JsonObject rimProps = new JsonObject();
         rimProps.add("className", clsNameProp);
         rimProps.add("methodName", mNameProp);
+        rimProps.add("methodSignature", mSigProp);
         JsonObject oldStrProp = new JsonObject();
         oldStrProp.addProperty("type", "string");
         oldStrProp.addProperty("description", "Original unique Smali code substring in method");
@@ -521,7 +527,6 @@ public class McpServer {
         rimParams.add("properties", rimProps);
         JsonArray rimReq = new JsonArray();
         rimReq.add("className");
-        rimReq.add("methodName");
         rimReq.add("old_str");
         rimReq.add("new_str");
         rimParams.add("required", rimReq);
@@ -537,6 +542,7 @@ public class McpServer {
         JsonObject rmProps = new JsonObject();
         rmProps.add("className", clsNameProp);
         rmProps.add("methodName", mNameProp);
+        rmProps.add("methodSignature", mSigProp);
         JsonObject smaliProp = new JsonObject();
         smaliProp.addProperty("type", "string");
         smaliProp.addProperty("description", "New full Smali code of the method, including .method and .end method");
@@ -544,7 +550,6 @@ public class McpServer {
         rmParams.add("properties", rmProps);
         JsonArray rmReq = new JsonArray();
         rmReq.add("className");
-        rmReq.add("methodName");
         rmReq.add("smali");
         rmParams.add("required", rmReq);
         dexReplMethod.add("inputSchema", rmParams);
@@ -639,6 +644,50 @@ public class McpServer {
         rcParams.add("required", rcReq);
         dexRemoveClass.add("inputSchema", rcParams);
         tools.add(dexRemoveClass);
+
+        // 13. dex_list_methods
+        JsonObject dexListMethods = new JsonObject();
+        dexListMethods.addProperty("name", "dex_list_methods");
+        dexListMethods.addProperty("description", "Lists methods of a class with full signatures for overload-safe calls.");
+        JsonObject lmParams = new JsonObject();
+        lmParams.addProperty("type", "object");
+        JsonObject lmProps = new JsonObject();
+        lmProps.add("className", clsNameProp);
+        lmParams.add("properties", lmProps);
+        JsonArray lmReq = new JsonArray();
+        lmReq.add("className");
+        lmParams.add("required", lmReq);
+        dexListMethods.add("inputSchema", lmParams);
+        tools.add(dexListMethods);
+
+        // 14. dex_list_fields
+        JsonObject dexListFields = new JsonObject();
+        dexListFields.addProperty("name", "dex_list_fields");
+        dexListFields.addProperty("description", "Lists fields of a class with full signatures.");
+        JsonObject lfParams = new JsonObject();
+        lfParams.addProperty("type", "object");
+        JsonObject lfProps = new JsonObject();
+        lfProps.add("className", clsNameProp);
+        lfParams.add("properties", lfProps);
+        JsonArray lfReq = new JsonArray();
+        lfReq.add("className");
+        lfParams.add("required", lfReq);
+        dexListFields.add("inputSchema", lfParams);
+        tools.add(dexListFields);
+
+        // 15. dex_get_strings
+        JsonObject dexGetStrings = new JsonObject();
+        dexGetStrings.addProperty("name", "dex_get_strings");
+        dexGetStrings.addProperty("description", "Returns string constants from loaded DEX files with optional filtering and pagination.");
+        JsonObject gsParams = new JsonObject();
+        gsParams.addProperty("type", "object");
+        JsonObject gsProps = new JsonObject();
+        gsProps.add("filter", filterProp);
+        gsProps.add("limit", limitProp);
+        gsProps.add("offset", offsetProp);
+        gsParams.add("properties", gsProps);
+        dexGetStrings.add("inputSchema", gsParams);
+        tools.add(dexGetStrings);
 
         result.add("tools", tools);
         res.add("result", result);
@@ -735,12 +784,14 @@ public class McpServer {
                 } else if ("dex_get_method".equals(toolName)) {
                     String className = args.has("className") ? args.get("className").getAsString() : "";
                     String methodName = args.has("methodName") ? args.get("methodName").getAsString() : "";
+                    String methodSignature = args.has("methodSignature") ? args.get("methodSignature").getAsString() : "";
                     ClassDef classDef = findClassDef(className);
+                    Method targetMethod = findMethod(classDef, methodName, methodSignature);
 
                     String smali = getPureSmali(classDef);
-                    String methodSmali = extractMethod(smali, methodName);
+                    String methodSmali = extractMethod(smali, targetMethod);
                     if (methodSmali == null) {
-                        throw new Exception("Method '" + methodName + "' not found in class " + className);
+                        throw new Exception("Method not found in smali: " + methodSignature(classDef.getType(), targetMethod));
                     }
                     textObj.addProperty("text", methodSmali);
                 } else if ("dex_search".equals(toolName)) {
@@ -862,21 +913,82 @@ public class McpServer {
                         }
                     }
                     textObj.addProperty("text", sb.toString());
+                } else if ("dex_list_methods".equals(toolName)) {
+                    String className = args.has("className") ? args.get("className").getAsString() : "";
+                    ClassDef classDef = findClassDef(className);
+                    JsonArray arr = new JsonArray();
+                    for (Method method : classDef.getMethods()) {
+                        JsonObject item = new JsonObject();
+                        item.addProperty("name", method.getName());
+                        item.addProperty("signature", methodSignature(classDef.getType(), method));
+                        arr.add(item);
+                    }
+                    JsonObject out = new JsonObject();
+                    out.addProperty("className", classDef.getType());
+                    out.addProperty("total", arr.size());
+                    out.add("methods", arr);
+                    textObj.addProperty("text", gson.toJson(out));
+                } else if ("dex_list_fields".equals(toolName)) {
+                    String className = args.has("className") ? args.get("className").getAsString() : "";
+                    ClassDef classDef = findClassDef(className);
+                    JsonArray arr = new JsonArray();
+                    for (Field field : classDef.getFields()) {
+                        JsonObject item = new JsonObject();
+                        item.addProperty("name", field.getName());
+                        item.addProperty("type", field.getType());
+                        item.addProperty("signature", classDef.getType() + "->" + field.getName() + ":" + field.getType());
+                        arr.add(item);
+                    }
+                    JsonObject out = new JsonObject();
+                    out.addProperty("className", classDef.getType());
+                    out.addProperty("total", arr.size());
+                    out.add("fields", arr);
+                    textObj.addProperty("text", gson.toJson(out));
+                } else if ("dex_get_strings".equals(toolName)) {
+                    String filter = args.has("filter") ? args.get("filter").getAsString() : "";
+                    int limit = args.has("limit") ? args.get("limit").getAsInt() : 200;
+                    int offset = args.has("offset") ? args.get("offset").getAsInt() : 0;
+                    List<String> allStrings = classTree.getAllStrings();
+                    List<String> matched = new ArrayList<>();
+                    for (String value : allStrings) {
+                        if (filter.isEmpty() || value.contains(filter)) {
+                            matched.add(value);
+                        }
+                    }
+                    int total = matched.size();
+                    int end = Math.min(offset + limit, total);
+                    List<String> sub = (offset < total) ? matched.subList(offset, end) : Collections.emptyList();
+                    JsonObject out = new JsonObject();
+                    out.addProperty("total", total);
+                    out.addProperty("offset", offset);
+                    out.addProperty("limit", limit);
+                    JsonArray arr = new JsonArray();
+                    for (String value : sub) {
+                        arr.add(value);
+                    }
+                    out.add("strings", arr);
+                    textObj.addProperty("text", gson.toJson(out));
                 } else if ("dex_replace_in_method".equals(toolName)) {
                     String className = args.has("className") ? args.get("className").getAsString() : "";
                     String methodName = args.has("methodName") ? args.get("methodName").getAsString() : "";
+                    String methodSignature = args.has("methodSignature") ? args.get("methodSignature").getAsString() : "";
                     String oldStr = args.has("old_str") ? args.get("old_str").getAsString() : "";
                     String newStr = args.has("new_str") ? args.get("new_str").getAsString() : "";
 
                     ClassDef classDef = findClassDef(className);
+                    Method targetMethod = findMethod(classDef, methodName, methodSignature);
                     String classSmali = getPureSmali(classDef);
-                    String methodSmali = extractMethod(classSmali, methodName);
+                    String methodSmali = extractMethod(classSmali, targetMethod);
                     if (methodSmali == null) {
-                        throw new Exception("Method '" + methodName + "' not found in class " + className);
+                        throw new Exception("Method not found in smali: " + methodSignature(classDef.getType(), targetMethod));
                     }
 
-                    if (!methodSmali.contains(oldStr)) {
+                    int occurrences = countOccurrences(methodSmali, oldStr);
+                    if (occurrences == 0) {
                         throw new Exception("Method body does not contain old_str");
+                    }
+                    if (occurrences > 1) {
+                        throw new Exception("old_str is not unique in the method (" + occurrences + " matches). Provide a larger unique snippet.");
                     }
 
                     String updatedMethodSmali = methodSmali.replace(oldStr, newStr);
@@ -889,13 +1001,15 @@ public class McpServer {
                 } else if ("dex_replace_method".equals(toolName)) {
                     String className = args.has("className") ? args.get("className").getAsString() : "";
                     String methodName = args.has("methodName") ? args.get("methodName").getAsString() : "";
+                    String methodSignature = args.has("methodSignature") ? args.get("methodSignature").getAsString() : "";
                     String newMethodSmali = args.has("smali") ? args.get("smali").getAsString() : "";
 
                     ClassDef classDef = findClassDef(className);
+                    Method targetMethod = findMethod(classDef, methodName, methodSignature);
                     String classSmali = getPureSmali(classDef);
-                    String methodSmali = extractMethod(classSmali, methodName);
+                    String methodSmali = extractMethod(classSmali, targetMethod);
                     if (methodSmali == null) {
-                        throw new Exception("Method '" + methodName + "' not found in class " + className);
+                        throw new Exception("Method not found in smali: " + methodSignature(classDef.getType(), targetMethod));
                     }
 
                     String updatedClassSmali = classSmali.replace(methodSmali, newMethodSmali);
@@ -908,8 +1022,21 @@ public class McpServer {
                     String outPath = args.has("outputPath") ? args.get("outputPath").getAsString() : "";
                     boolean stripDebug = args.has("stripDebug") && args.get("stripDebug").getAsBoolean();
 
+                    classTree.clearOutputPathOverrides();
                     if (!outPath.isEmpty()) {
-                        classTree.paths.set(0, outPath);
+                        List<String> dexFileNames = classTree.getDexFileNames();
+                        if (dexFileNames.size() == 1) {
+                            classTree.setOutputPathOverride(dexFileNames.get(0), outPath);
+                        } else {
+                            File outFile = new File(outPath);
+                            boolean directoryStyle = outPath.endsWith("/") || outPath.endsWith(File.separator) || (outFile.exists() && outFile.isDirectory());
+                            if (!directoryStyle) {
+                                throw new Exception("outputPath must be a directory when multiple DEX files are loaded");
+                            }
+                            for (String dexFileName : dexFileNames) {
+                                classTree.setOutputPathOverride(dexFileName, new File(outFile, dexFileName).getAbsolutePath());
+                            }
+                        }
                     }
 
                     ClassTree.CompilationOptions opts = new ClassTree.CompilationOptions();
@@ -964,6 +1091,7 @@ public class McpServer {
             }
         } catch (Exception e) {
             textObj.addProperty("text", "Error executing " + toolName + ": " + e.getMessage());
+            result.addProperty("isError", true);
         }
 
         content.add(textObj);
@@ -1016,14 +1144,63 @@ public class McpServer {
         return sw.toString();
     }
 
-    private static String extractMethod(String smaliCode, String methodName) {
+    private static Method findMethod(ClassDef classDef, String methodName, String fullSignature) throws Exception {
+        if (fullSignature != null && !fullSignature.isEmpty()) {
+            for (Method method : classDef.getMethods()) {
+                if (fullSignature.equals(methodSignature(classDef.getType(), method))) {
+                    return method;
+                }
+            }
+            throw new Exception("Method signature not found: " + fullSignature);
+        }
+
+        if (methodName == null || methodName.isEmpty()) {
+            throw new Exception("methodName or methodSignature is required");
+        }
+
+        List<Method> matches = new ArrayList<>();
+        for (Method method : classDef.getMethods()) {
+            if (methodName.equals(method.getName())) {
+                matches.add(method);
+            }
+        }
+        if (matches.isEmpty()) {
+            throw new Exception("Method '" + methodName + "' not found in class " + classDef.getType());
+        }
+        if (matches.size() > 1) {
+            StringBuilder sb = new StringBuilder();
+            for (Method method : matches) {
+                sb.append(methodSignature(classDef.getType(), method)).append("\n");
+            }
+            throw new Exception("Method '" + methodName + "' is overloaded. Use methodSignature. Available signatures:\n" + sb.toString());
+        }
+        return matches.get(0);
+    }
+
+    private static String methodSignature(String classType, Method method) {
+        return classType + "->" + methodDescriptor(method);
+    }
+
+    private static String methodDescriptor(Method method) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(method.getName()).append("(");
+        for (CharSequence param : method.getParameterTypes()) {
+            sb.append(param);
+        }
+        sb.append(")").append(method.getReturnType());
+        return sb.toString();
+    }
+
+    private static String extractMethod(String smaliCode, Method method) {
+        String descriptor = methodDescriptor(method);
+        String nameWithParen = method.getName() + "(";
         String[] lines = smaliCode.split("\n");
         StringBuilder sb = null;
         boolean inMethod = false;
 
         for (String line : lines) {
             String trimmed = line.trim();
-            if (trimmed.startsWith(".method ") && trimmed.contains(" " + methodName + "(")) {
+            if (trimmed.startsWith(".method ") && trimmed.contains(nameWithParen) && trimmed.endsWith(descriptor)) {
                 sb = new StringBuilder();
                 inMethod = true;
             }
@@ -1038,4 +1215,18 @@ public class McpServer {
 
         return (sb != null) ? sb.toString() : null;
     }
+
+    private static int countOccurrences(String haystack, String needle) {
+        if (needle == null || needle.isEmpty()) {
+            return 0;
+        }
+        int count = 0;
+        int index = 0;
+        while ((index = haystack.indexOf(needle, index)) != -1) {
+            count++;
+            index += needle.length();
+        }
+        return count;
+    }
 }
+

@@ -4,7 +4,7 @@
 
 This is a fork of the original advanced Android DEX file editor project, with added support for **MCP (Model Context Protocol)**. 
 
-This fork allows you to connect your local AI agent (like Claude Desktop, Pi, or any other MCP client) directly to your Android device to read, search, modify, and build DEX/APK files.
+This fork allows you to connect your local AI agent (like Claude Desktop, Pi, or any other MCP client) directly to your Android device to read, search, modify, and build DEX files.
 
 ---
 
@@ -12,18 +12,21 @@ This fork allows you to connect your local AI agent (like Claude Desktop, Pi, or
 
 - **Built-in MCP HTTP Server**: Runs inside a background Android Service (`McpService`) with a Foreground notification. The server does not disconnect when the app is minimized.
 - **Tools for LLM Agent**:
-  - `dex_load` — Load DEX/APK files (including multi-dex via paths array).
+  - `dex_load` — Load DEX files (including multi-dex via paths array).
   - `dex_list_classes` — Get a list of classes with filtering and pagination.
   - `dex_get_class_outline` — Get field and method signatures (without method bodies) to save model context window.
-  - `dex_get_method` — Read Smali code of a single specific method.
+  - `dex_get_method` — Read Smali code of a single specific method (supports full `methodSignature` for overloads).
   - `dex_get_java` — Decompile a Smali class into fully readable Java code using the built-in JADX decompiler.
   - `dex_search` — Fast pool search by classes, methods, fields, strings, or code.
   - `dex_find_usages` — Deep Xref search (who calls a method, accesses a field, or extends a class).
-  - `dex_replace_in_method` — Smart precise string replacement in a method (`str_replace` approach) with instant compiler verification.
-  - `dex_replace_method` — Full replacement of a method body.
+  - `dex_replace_in_method` — Smart precise string replacement in a method (`str_replace` approach) with instant compiler verification and uniqueness checks.
+  - `dex_replace_method` — Full replacement of a method body (supports full `methodSignature` for overloads).
   - `dex_create_class` — Create and compile an entirely new class from scratch using Smali code.
   - `dex_remove_class` — Completely remove a class from the DEX.
-  - `dex_save` — Compile and save only modified files to disk.
+  - `dex_list_methods` — List methods of a class with full overload-safe signatures.
+  - `dex_list_fields` — List fields of a class with full field signatures.
+  - `dex_get_strings` — List string constants with filtering and pagination.
+  - `dex_save` — Compile and save modified files to disk, with exact output path support for single-dex files.
 - **Two-way Synchronization**:
   - If the LLM agent loads a file via `dex_load`, its path is immediately displayed on the app's main screen.
   - If the user selects a file on the main screen (via the built-in file picker or by pasting the path) while the MCP server is running, the file is automatically loaded into the server's memory.

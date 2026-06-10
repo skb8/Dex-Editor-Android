@@ -122,6 +122,7 @@ public class ClassTree {
     private final String workDir;
     private final Map<String, java.util.HashSet<String>> editedClassMap = new HashMap<>();
     private final Map<String, String> pendingSmaliMap = new HashMap<>();
+    private final Map<String, String> outputPathOverrides = new HashMap<>();
     public Tree tree;
     public HashMap<String, ClassDef> classMap;
     public List<DexBackedDexFile> dexFiles;
@@ -401,25 +402,58 @@ public class ClassTree {
 
     // save class def to the main node o the dex and record the changes classes
     public void saveClassDef(ClassDef classDef) {
-        String type = classDef.getType().substring(1, classDef.getType().length() - 1);
+        String fullType = classDef.getType();
+        String type = fullType.substring(1, fullType.length() - 1);
         pendingSmaliMap.remove(type);
+
+        ensureClassHasDexOwner(fullType);
 
         // Update classMap
         classMap.put(type, classDef);
 
         // Update classDefList
+        boolean replaced = false;
         for (int i = 0; i < classDefList.size(); i++) {
             ClassDef existingDef = classDefList.get(i);
             String existingType = existingDef.getType().substring(1, existingDef.getType().length() - 1);
             if (existingType.equals(type)) {
                 classDefList.set(i, classDef);
+                replaced = true;
                 break;
             }
+        }
+        if (!replaced) {
+            classDefList.add(classDef);
         }
 
         recordEditedClass(type);
         DexEditorActivity.isChanged = true;
         DexEditorActivity.isSaved = false;
+    }
+
+    private void ensureClassHasDexOwner(String fullType) {
+        if (typeToDexMap.containsKey(fullType)) return;
+
+        String targetFileName = null;
+        if (dexClassMap != null && !dexClassMap.isEmpty()) {
+            targetFileName = dexClassMap.keySet().iterator().next();
+        } else if (paths != null && !paths.isEmpty()) {
+            targetFileName = new File(paths.get(0)).getName();
+        }
+
+        if (targetFileName == null || targetFileName.isEmpty()) {
+            targetFileName = "classes.dex";
+        }
+
+        typeToDexMap.put(fullType, targetFileName);
+        List<String> classNames = dexClassMap.get(targetFileName);
+        if (classNames == null) {
+            classNames = new ArrayList<>();
+            dexClassMap.put(targetFileName, classNames);
+        }
+        if (!classNames.contains(fullType)) {
+            classNames.add(fullType);
+        }
     }
 
     public String getSmaliByType(ClassDef classDef) throws Exception {
@@ -486,6 +520,20 @@ public class ClassTree {
         }
     }
 
+    public List<String> getDexFileNames() {
+        return new ArrayList<>(dexClassMap.keySet());
+    }
+
+    public void clearOutputPathOverrides() {
+        outputPathOverrides.clear();
+    }
+
+    public void setOutputPathOverride(String sourceDexFileName, String outputPath) {
+        if (sourceDexFileName != null && outputPath != null && !outputPath.isEmpty()) {
+            outputPathOverrides.put(sourceDexFileName, outputPath);
+        }
+    }
+
     // save all loaded dexes
     @SuppressLint("SdCardPath")
     public void saveAllDexFiles(DexSaveProgress dexSaveProgress) throws Exception {
@@ -515,7 +563,7 @@ public class ClassTree {
             String fileName = entry.getKey();
             dexSaveProgress.onTitle(fileName + " (" + current + "/" + total + ")");
 
-            boolean isTouched = forceCompileAll || deletedClassJson.containsKey(fileName) || editedClassMap.containsKey(fileName);
+            boolean isTouched = forceCompileAll || outputPathOverrides.containsKey(fileName) || deletedClassJson.containsKey(fileName) || editedClassMap.containsKey(fileName);
             if (!isTouched) {
                 current++;
                 continue;
@@ -622,13 +670,23 @@ public class ClassTree {
                 dexBuilder.writeTo(memoryDataStore);
                 byte[] result = Arrays.copyOf(memoryDataStore.getBuffer(), memoryDataStore.getSize());
 
-                String outputDir;
-                if (paths != null && !paths.isEmpty()) {
-                    outputDir = new File(paths.get(0)).getParent();
+                File outFile;
+                String overridePath = outputPathOverrides.get(fileName);
+                if (overridePath != null && !overridePath.isEmpty()) {
+                    outFile = new File(overridePath);
                 } else {
-                    outputDir = "/sdcard";
+                    String outputDir;
+                    if (paths != null && !paths.isEmpty()) {
+                        outputDir = new File(paths.get(0)).getParent();
+                    } else {
+                        outputDir = "/sdcard";
+                    }
+                    outFile = new File(outputDir, fileName);
                 }
-                File outFile = new File(outputDir, fileName);
+                File parentDir = outFile.getParentFile();
+                if (parentDir != null && !parentDir.exists()) {
+                    parentDir.mkdirs();
+                }
                 File bakFile = new File(outFile.getAbsolutePath() + ".bak");
 
                 if (outFile.exists()) {
