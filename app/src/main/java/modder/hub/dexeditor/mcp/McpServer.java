@@ -27,6 +27,7 @@ import modder.hub.dexeditor.utils.ClassTree;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -36,7 +37,11 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -689,6 +694,70 @@ public class McpServer {
         dexGetStrings.add("inputSchema", gsParams);
         tools.add(dexGetStrings);
 
+        JsonObject genericParams = new JsonObject();
+        genericParams.addProperty("type", "object");
+        genericParams.add("properties", new JsonObject());
+
+        JsonObject dexValidate = new JsonObject();
+        dexValidate.addProperty("name", "dex_validate");
+        dexValidate.addProperty("description", "Validates pending or supplied Smali by assembling it without saving to disk.");
+        dexValidate.add("inputSchema", genericParams);
+        tools.add(dexValidate);
+
+        JsonObject dexDiff = new JsonObject();
+        dexDiff.addProperty("name", "dex_diff");
+        dexDiff.addProperty("description", "Returns a compact line diff for a class or supplied Smali content.");
+        dexDiff.add("inputSchema", genericParams);
+        tools.add(dexDiff);
+
+        JsonObject dexExportSmali = new JsonObject();
+        dexExportSmali.addProperty("name", "dex_export_smali");
+        dexExportSmali.addProperty("description", "Exports one class or a package to Smali text, optionally writing .smali files to outputDir.");
+        dexExportSmali.add("inputSchema", genericParams);
+        tools.add(dexExportSmali);
+
+        JsonObject dexImportSmali = new JsonObject();
+        dexImportSmali.addProperty("name", "dex_import_smali");
+        dexImportSmali.addProperty("description", "Imports Smali from text or file paths, assembles it, and updates the in-memory DEX.");
+        dexImportSmali.add("inputSchema", genericParams);
+        tools.add(dexImportSmali);
+
+        JsonObject dexRenameClass = new JsonObject();
+        dexRenameClass.addProperty("name", "dex_rename_class");
+        dexRenameClass.addProperty("description", "Renames a class descriptor and updates textual Smali references across loaded classes.");
+        dexRenameClass.add("inputSchema", genericParams);
+        tools.add(dexRenameClass);
+
+        JsonObject dexRenameMethod = new JsonObject();
+        dexRenameMethod.addProperty("name", "dex_rename_method");
+        dexRenameMethod.addProperty("description", "Renames a method by full signature and updates textual Smali references across loaded classes.");
+        dexRenameMethod.add("inputSchema", genericParams);
+        tools.add(dexRenameMethod);
+
+        JsonObject dexRenameField = new JsonObject();
+        dexRenameField.addProperty("name", "dex_rename_field");
+        dexRenameField.addProperty("description", "Renames a field by full signature and updates textual Smali references across loaded classes.");
+        dexRenameField.add("inputSchema", genericParams);
+        tools.add(dexRenameField);
+
+        JsonObject dexGetCallGraph = new JsonObject();
+        dexGetCallGraph.addProperty("name", "dex_get_call_graph");
+        dexGetCallGraph.addProperty("description", "Returns outgoing or incoming method-call edges for a class or method.");
+        dexGetCallGraph.add("inputSchema", genericParams);
+        tools.add(dexGetCallGraph);
+
+        JsonObject dexGetConstants = new JsonObject();
+        dexGetConstants.addProperty("name", "dex_get_constants");
+        dexGetConstants.addProperty("description", "Extracts string and numeric constants from loaded classes with optional filtering.");
+        dexGetConstants.add("inputSchema", genericParams);
+        tools.add(dexGetConstants);
+
+        JsonObject dexPatchBatch = new JsonObject();
+        dexPatchBatch.addProperty("name", "dex_patch_batch");
+        dexPatchBatch.addProperty("description", "Applies a batch of MCP tool operations sequentially, stopping on first error.");
+        dexPatchBatch.add("inputSchema", genericParams);
+        tools.add(dexPatchBatch);
+
         result.add("tools", tools);
         res.add("result", result);
         return gson.toJson(res);
@@ -974,6 +1043,7 @@ public class McpServer {
                     String methodSignature = args.has("methodSignature") ? args.get("methodSignature").getAsString() : "";
                     String oldStr = args.has("old_str") ? args.get("old_str").getAsString() : "";
                     String newStr = args.has("new_str") ? args.get("new_str").getAsString() : "";
+                    boolean dryRun = args.has("dryRun") && args.get("dryRun").getAsBoolean();
 
                     ClassDef classDef = findClassDef(className);
                     Method targetMethod = findMethod(classDef, methodName, methodSignature);
@@ -993,16 +1063,20 @@ public class McpServer {
 
                     String updatedMethodSmali = methodSmali.replace(oldStr, newStr);
                     String updatedClassSmali = classSmali.replace(methodSmali, updatedMethodSmali);
-
-                    ClassDef assembled = Smali.assemble(updatedClassSmali, new SmaliOptions(), classTree.getOpenedDexVersion());
-                    classTree.saveClassDef(assembled);
-
-                    textObj.addProperty("text", "Successfully replaced code and reassembled class: " + className);
+                    Smali.assemble(updatedClassSmali, new SmaliOptions(), classTree.getOpenedDexVersion());
+                    if (dryRun) {
+                        textObj.addProperty("text", buildLineDiff(classSmali, updatedClassSmali));
+                    } else {
+                        ClassDef assembled = Smali.assemble(updatedClassSmali, new SmaliOptions(), classTree.getOpenedDexVersion());
+                        classTree.saveClassDef(assembled);
+                        textObj.addProperty("text", "Successfully replaced code and reassembled class: " + className);
+                    }
                 } else if ("dex_replace_method".equals(toolName)) {
                     String className = args.has("className") ? args.get("className").getAsString() : "";
                     String methodName = args.has("methodName") ? args.get("methodName").getAsString() : "";
                     String methodSignature = args.has("methodSignature") ? args.get("methodSignature").getAsString() : "";
                     String newMethodSmali = args.has("smali") ? args.get("smali").getAsString() : "";
+                    boolean dryRun = args.has("dryRun") && args.get("dryRun").getAsBoolean();
 
                     ClassDef classDef = findClassDef(className);
                     Method targetMethod = findMethod(classDef, methodName, methodSignature);
@@ -1013,11 +1087,239 @@ public class McpServer {
                     }
 
                     String updatedClassSmali = classSmali.replace(methodSmali, newMethodSmali);
-
-                    ClassDef assembled = Smali.assemble(updatedClassSmali, new SmaliOptions(), classTree.getOpenedDexVersion());
-                    classTree.saveClassDef(assembled);
-
-                    textObj.addProperty("text", "Successfully replaced entire method and reassembled class: " + className);
+                    Smali.assemble(updatedClassSmali, new SmaliOptions(), classTree.getOpenedDexVersion());
+                    if (dryRun) {
+                        textObj.addProperty("text", buildLineDiff(classSmali, updatedClassSmali));
+                    } else {
+                        ClassDef assembled = Smali.assemble(updatedClassSmali, new SmaliOptions(), classTree.getOpenedDexVersion());
+                        classTree.saveClassDef(assembled);
+                        textObj.addProperty("text", "Successfully replaced entire method and reassembled class: " + className);
+                    }
+                } else if ("dex_validate".equals(toolName)) {
+                    JsonArray issues = new JsonArray();
+                    int checked = 0;
+                    if (args.has("smali")) {
+                        checked++;
+                        try {
+                            Smali.assemble(args.get("smali").getAsString(), new SmaliOptions(), classTree.getOpenedDexVersion());
+                        } catch (Exception ex) {
+                            issues.add(ex.getMessage());
+                        }
+                    } else if (args.has("className")) {
+                        checked++;
+                        ClassDef classDef = findClassDef(args.get("className").getAsString());
+                        try {
+                            Smali.assemble(getPureSmali(classDef), new SmaliOptions(), classTree.getOpenedDexVersion());
+                        } catch (Exception ex) {
+                            issues.add(classDef.getType() + ": " + ex.getMessage());
+                        }
+                    } else {
+                        Map<String, String> pending = classTree.getPendingSmaliMap();
+                        if (pending.isEmpty()) {
+                            for (ClassDef classDef : classTree.classMap.values()) {
+                                checked++;
+                                try {
+                                    Smali.assemble(getPureSmali(classDef), new SmaliOptions(), classTree.getOpenedDexVersion());
+                                } catch (Exception ex) {
+                                    issues.add(classDef.getType() + ": " + ex.getMessage());
+                                }
+                                if (checked >= 200 && !args.has("all")) break;
+                            }
+                        } else {
+                            for (Map.Entry<String, String> entry : pending.entrySet()) {
+                                checked++;
+                                try {
+                                    Smali.assemble(entry.getValue(), new SmaliOptions(), classTree.getOpenedDexVersion());
+                                } catch (Exception ex) {
+                                    issues.add(entry.getKey() + ": " + ex.getMessage());
+                                }
+                            }
+                        }
+                    }
+                    JsonObject out = new JsonObject();
+                    out.addProperty("ok", issues.size() == 0);
+                    out.addProperty("checked", checked);
+                    out.add("issues", issues);
+                    textObj.addProperty("text", gson.toJson(out));
+                } else if ("dex_diff".equals(toolName)) {
+                    String className = args.has("className") ? args.get("className").getAsString() : "";
+                    String oldText;
+                    String newText;
+                    if (args.has("oldSmali") && args.has("newSmali")) {
+                        oldText = args.get("oldSmali").getAsString();
+                        newText = args.get("newSmali").getAsString();
+                    } else {
+                        ClassDef classDef = findClassDef(className);
+                        oldText = getBaseSmali(classDef);
+                        if (args.has("newSmali")) {
+                            newText = args.get("newSmali").getAsString();
+                        } else {
+                            newText = getPureSmali(classDef);
+                        }
+                    }
+                    textObj.addProperty("text", buildLineDiff(oldText, newText));
+                } else if ("dex_export_smali".equals(toolName)) {
+                    String className = args.has("className") ? args.get("className").getAsString() : "";
+                    String packagePrefix = args.has("packagePrefix") ? args.get("packagePrefix").getAsString() : "";
+                    String outputDir = args.has("outputDir") ? args.get("outputDir").getAsString() : "";
+                    JsonObject out = new JsonObject();
+                    JsonArray exported = new JsonArray();
+                    List<ClassDef> targets = new ArrayList<>();
+                    if (!className.isEmpty()) {
+                        targets.add(findClassDef(className));
+                    } else {
+                        for (ClassDef classDef : classTree.classMap.values()) {
+                            if (packagePrefix.isEmpty() || classDef.getType().startsWith(packagePrefix)) {
+                                targets.add(classDef);
+                            }
+                        }
+                    }
+                    Collections.sort(targets, new java.util.Comparator<ClassDef>() {
+                        public int compare(ClassDef a, ClassDef b) { return a.getType().compareTo(b.getType()); }
+                    });
+                    if (!outputDir.isEmpty()) {
+                        for (ClassDef classDef : targets) {
+                            String rel = classDef.getType().substring(1, classDef.getType().length() - 1) + ".smali";
+                            File outFile = new File(outputDir, rel);
+                            writeTextFile(outFile, getPureSmali(classDef));
+                            exported.add(outFile.getAbsolutePath());
+                        }
+                        out.addProperty("outputDir", outputDir);
+                        out.addProperty("count", targets.size());
+                        out.add("files", exported);
+                        textObj.addProperty("text", gson.toJson(out));
+                    } else if (targets.size() == 1) {
+                        textObj.addProperty("text", getPureSmali(targets.get(0)));
+                    } else {
+                        for (ClassDef classDef : targets) {
+                            JsonObject item = new JsonObject();
+                            item.addProperty("className", classDef.getType());
+                            item.addProperty("smali", getPureSmali(classDef));
+                            exported.add(item);
+                            if (exported.size() >= 20 && !args.has("all")) break;
+                        }
+                        out.addProperty("count", targets.size());
+                        out.add("classes", exported);
+                        textObj.addProperty("text", gson.toJson(out));
+                    }
+                } else if ("dex_import_smali".equals(toolName)) {
+                    List<String> smaliSources = new ArrayList<>();
+                    if (args.has("smali")) smaliSources.add(args.get("smali").getAsString());
+                    if (args.has("path")) smaliSources.add(readTextFile(new File(args.get("path").getAsString())));
+                    if (args.has("paths") && args.get("paths").isJsonArray()) {
+                        JsonArray paths = args.getAsJsonArray("paths");
+                        for (int i = 0; i < paths.size(); i++) smaliSources.add(readTextFile(new File(paths.get(i).getAsString())));
+                    }
+                    if (smaliSources.isEmpty()) throw new Exception("smali, path, or paths is required");
+                    JsonArray imported = new JsonArray();
+                    boolean dryRun = args.has("dryRun") && args.get("dryRun").getAsBoolean();
+                    for (String smaliCode : smaliSources) {
+                        ClassDef assembled = Smali.assemble(smaliCode, new SmaliOptions(), classTree.getOpenedDexVersion());
+                        imported.add(assembled.getType());
+                        if (!dryRun) classTree.saveClassDef(assembled);
+                    }
+                    JsonObject out = new JsonObject();
+                    out.addProperty("dryRun", dryRun);
+                    out.addProperty("count", imported.size());
+                    out.add("classes", imported);
+                    textObj.addProperty("text", gson.toJson(out));
+                } else if ("dex_rename_class".equals(toolName)) {
+                    String oldClass = normalizeClassDescriptor(args.get("oldClass").getAsString());
+                    String newClass = normalizeClassDescriptor(args.get("newClass").getAsString());
+                    boolean dryRun = args.has("dryRun") && args.get("dryRun").getAsBoolean();
+                    int changed = replaceAcrossClasses(oldClass, newClass, dryRun);
+                    if (!dryRun) classTree.removeClass(oldClass.substring(1, oldClass.length() - 1));
+                    textObj.addProperty("text", (dryRun ? "Dry run: " : "") + "Renamed class references in " + changed + " classes");
+                } else if ("dex_rename_method".equals(toolName)) {
+                    String oldSignature = args.get("oldSignature").getAsString();
+                    String newName = args.get("newName").getAsString();
+                    int arrow = oldSignature.indexOf("->");
+                    int paren = oldSignature.indexOf("(", arrow);
+                    if (arrow < 0 || paren < 0) throw new Exception("oldSignature must look like Lpkg/Cls;->method(I)V");
+                    String owner = oldSignature.substring(0, arrow + 2);
+                    String ownerClass = oldSignature.substring(0, arrow);
+                    String oldRef = oldSignature.substring(arrow + 2);
+                    String newRef = newName + oldSignature.substring(paren);
+                    boolean dryRun = args.has("dryRun") && args.get("dryRun").getAsBoolean();
+                    int changed = replaceMemberReferenceAcrossClasses(ownerClass, oldSignature, owner + newRef, oldRef, newRef, dryRun);
+                    textObj.addProperty("text", (dryRun ? "Dry run: " : "") + "Renamed method references in " + changed + " classes");
+                } else if ("dex_rename_field".equals(toolName)) {
+                    String oldSignature = args.get("oldSignature").getAsString();
+                    String newName = args.get("newName").getAsString();
+                    int arrow = oldSignature.indexOf("->");
+                    int colon = oldSignature.indexOf(":", arrow);
+                    if (arrow < 0 || colon < 0) throw new Exception("oldSignature must look like Lpkg/Cls;->field:Z");
+                    String owner = oldSignature.substring(0, arrow + 2);
+                    String ownerClass = oldSignature.substring(0, arrow);
+                    String oldRef = oldSignature.substring(arrow + 2);
+                    String newRef = newName + oldSignature.substring(colon);
+                    boolean dryRun = args.has("dryRun") && args.get("dryRun").getAsBoolean();
+                    int changed = replaceMemberReferenceAcrossClasses(ownerClass, oldSignature, owner + newRef, oldRef, newRef, dryRun);
+                    textObj.addProperty("text", (dryRun ? "Dry run: " : "") + "Renamed field references in " + changed + " classes");
+                } else if ("dex_get_call_graph".equals(toolName)) {
+                    String className = args.has("className") ? args.get("className").getAsString() : "";
+                    String methodName = args.has("methodName") ? args.get("methodName").getAsString() : "";
+                    String methodSig = args.has("methodSignature") ? args.get("methodSignature").getAsString() : "";
+                    String direction = args.has("direction") ? args.get("direction").getAsString() : "outgoing";
+                    JsonArray edges = new JsonArray();
+                    if ("incoming".equalsIgnoreCase(direction) && !methodSig.isEmpty()) {
+                        for (ClassDef c : classTree.classMap.values()) collectCallEdges(c, null, methodSig, edges);
+                    } else {
+                        ClassDef c = findClassDef(className);
+                        Method target = (!methodName.isEmpty() || !methodSig.isEmpty()) ? findMethod(c, methodName, methodSig) : null;
+                        collectCallEdges(c, target, null, edges);
+                    }
+                    JsonObject out = new JsonObject();
+                    out.addProperty("total", edges.size());
+                    out.add("edges", edges);
+                    textObj.addProperty("text", gson.toJson(out));
+                } else if ("dex_get_constants".equals(toolName)) {
+                    String className = args.has("className") ? args.get("className").getAsString() : "";
+                    String filter = args.has("filter") ? args.get("filter").getAsString() : "";
+                    int limit = args.has("limit") ? args.get("limit").getAsInt() : 300;
+                    JsonArray constants = new JsonArray();
+                    List<ClassDef> targets = new ArrayList<>();
+                    if (!className.isEmpty()) targets.add(findClassDef(className)); else targets.addAll(classTree.classMap.values());
+                    for (ClassDef c : targets) {
+                        String[] lines = getPureSmali(c).split("\n");
+                        for (String line : lines) {
+                            String t = line.trim();
+                            if (t.startsWith("const") || t.contains("const-string")) {
+                                if (filter.isEmpty() || t.contains(filter)) {
+                                    JsonObject item = new JsonObject();
+                                    item.addProperty("className", c.getType());
+                                    item.addProperty("line", t);
+                                    constants.add(item);
+                                    if (constants.size() >= limit) break;
+                                }
+                            }
+                        }
+                        if (constants.size() >= limit) break;
+                    }
+                    JsonObject out = new JsonObject();
+                    out.addProperty("total", constants.size());
+                    out.add("constants", constants);
+                    textObj.addProperty("text", gson.toJson(out));
+                } else if ("dex_patch_batch".equals(toolName)) {
+                    JsonArray ops = args.getAsJsonArray("operations");
+                    JsonArray results = new JsonArray();
+                    for (int i = 0; i < ops.size(); i++) {
+                        JsonObject op = ops.get(i).getAsJsonObject();
+                        String opTool = op.get("tool").getAsString();
+                        if ("dex_patch_batch".equals(opTool) || "dex_load".equals(opTool)) throw new Exception("Unsupported batch tool: " + opTool);
+                        JsonObject opArgs = op.has("args") ? op.getAsJsonObject("args") : new JsonObject();
+                        String raw = executeTool(opTool, opArgs, id);
+                        JsonObject parsed = JsonParser.parseString(raw).getAsJsonObject();
+                        JsonObject opResult = parsed.getAsJsonObject("result");
+                        results.add(opResult);
+                        if (opResult.has("isError") && opResult.get("isError").getAsBoolean()) {
+                            throw new Exception("Batch stopped at operation " + i + ": " + opResult.getAsJsonArray("content").get(0).getAsJsonObject().get("text").getAsString());
+                        }
+                    }
+                    JsonObject out = new JsonObject();
+                    out.addProperty("applied", results.size());
+                    out.add("results", results);
+                    textObj.addProperty("text", gson.toJson(out));
                 } else if ("dex_save".equals(toolName)) {
                     String outPath = args.has("outputPath") ? args.get("outputPath").getAsString() : "";
                     boolean stripDebug = args.has("stripDebug") && args.get("stripDebug").getAsBoolean();
@@ -1227,6 +1529,130 @@ public class McpServer {
             index += needle.length();
         }
         return count;
+    }
+
+    private static String getBaseSmali(ClassDef classDef) throws Exception {
+        StringWriter sw = new StringWriter();
+        BaksmaliWriter bw = new BaksmaliWriter(sw);
+        new com.android.tools.smali.baksmali.Adaptors.ClassDefinition(new BaksmaliOptions(), classDef).writeTo(bw);
+        bw.close();
+        return sw.toString();
+    }
+
+    private static String buildLineDiff(String oldText, String newText) {
+        if (oldText.equals(newText)) return "No changes.";
+        String[] oldLines = oldText.split("\n", -1);
+        String[] newLines = newText.split("\n", -1);
+        int max = Math.max(oldLines.length, newLines.length);
+        StringBuilder sb = new StringBuilder();
+        int shown = 0;
+        for (int i = 0; i < max; i++) {
+            String oldLine = i < oldLines.length ? oldLines[i] : null;
+            String newLine = i < newLines.length ? newLines[i] : null;
+            if (oldLine == null || newLine == null || !oldLine.equals(newLine)) {
+                sb.append("@@ line ").append(i + 1).append(" @@\n");
+                if (oldLine != null) sb.append("- ").append(oldLine).append("\n");
+                if (newLine != null) sb.append("+ ").append(newLine).append("\n");
+                shown++;
+                if (shown >= 200) {
+                    sb.append("...diff truncated...\n");
+                    break;
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String normalizeClassDescriptor(String value) {
+        if (value.startsWith("L") && value.endsWith(";")) return value;
+        return "L" + value.replace('.', '/') + ";";
+    }
+
+    private static int replaceAcrossClasses(String oldText, String newText, boolean dryRun) throws Exception {
+        int changed = 0;
+        List<ClassDef> snapshot = new ArrayList<>(classTree.classMap.values());
+        for (ClassDef classDef : snapshot) {
+            String smali = getPureSmali(classDef);
+            if (smali.contains(oldText)) {
+                String updated = smali.replace(oldText, newText);
+                Smali.assemble(updated, new SmaliOptions(), classTree.getOpenedDexVersion());
+                changed++;
+                if (!dryRun) {
+                    ClassDef assembled = Smali.assemble(updated, new SmaliOptions(), classTree.getOpenedDexVersion());
+                    classTree.saveClassDef(assembled);
+                }
+            }
+        }
+        return changed;
+    }
+
+    private static int replaceMemberReferenceAcrossClasses(String ownerClass, String oldFullRef, String newFullRef, String oldMemberRef, String newMemberRef, boolean dryRun) throws Exception {
+        int changed = 0;
+        List<ClassDef> snapshot = new ArrayList<>(classTree.classMap.values());
+        for (ClassDef classDef : snapshot) {
+            String smali = getPureSmali(classDef);
+            String updated = smali.replace(oldFullRef, newFullRef);
+            if (classDef.getType().equals(ownerClass)) {
+                updated = updated.replace(oldMemberRef, newMemberRef);
+            }
+            if (!updated.equals(smali)) {
+                Smali.assemble(updated, new SmaliOptions(), classTree.getOpenedDexVersion());
+                changed++;
+                if (!dryRun) {
+                    ClassDef assembled = Smali.assemble(updated, new SmaliOptions(), classTree.getOpenedDexVersion());
+                    classTree.saveClassDef(assembled);
+                }
+            }
+        }
+        return changed;
+    }
+
+    private static String readTextFile(File file) throws Exception {
+        byte[] bytes = classTree.read(file.getAbsolutePath());
+        return new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    private static void writeTextFile(File file, String text) throws Exception {
+        File parent = file.getParentFile();
+        if (parent != null && !parent.exists()) parent.mkdirs();
+        FileOutputStream fos = new FileOutputStream(file);
+        try {
+            fos.write(text.getBytes(StandardCharsets.UTF_8));
+        } finally {
+            fos.close();
+        }
+    }
+
+    private static String methodReferenceSignature(MethodReference mRef) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(mRef.getDefiningClass()).append("->").append(mRef.getName()).append("(");
+        for (CharSequence param : mRef.getParameterTypes()) sb.append(param);
+        sb.append(")").append(mRef.getReturnType());
+        return sb.toString();
+    }
+
+    private static void collectCallEdges(ClassDef classDef, Method targetMethod, String incomingTarget, JsonArray edges) {
+        for (Method method : classDef.getMethods()) {
+            if (targetMethod != null && !methodSignature(classDef.getType(), method).equals(methodSignature(classDef.getType(), targetMethod))) continue;
+            MethodImplementation impl = method.getImplementation();
+            if (impl == null) continue;
+            String from = methodSignature(classDef.getType(), method);
+            for (Instruction instruction : impl.getInstructions()) {
+                if (instruction instanceof ReferenceInstruction) {
+                    Reference ref = ((ReferenceInstruction) instruction).getReference();
+                    if (ref instanceof MethodReference) {
+                        String to = methodReferenceSignature((MethodReference) ref);
+                        if (incomingTarget == null || incomingTarget.equals(to)) {
+                            JsonObject edge = new JsonObject();
+                            edge.addProperty("from", from);
+                            edge.addProperty("to", to);
+                            edges.add(edge);
+                            if (edges.size() >= 1000) return;
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

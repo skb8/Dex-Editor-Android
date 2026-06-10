@@ -60,8 +60,6 @@ import modder.hub.dexeditor.mcp.McpServerDialog;
 import modder.hub.dexeditor.mcp.McpServer;
 import android.view.Menu;
 import android.view.MenuItem;
-import android.content.Context;
-import modder.hub.dexeditor.utils.DexFileSelector;
 import modder.hub.dexeditor.utils.FilePermissionManager;
 import modder.hub.dexeditor.utils.FileUtil;
 
@@ -177,7 +175,7 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
         pickDexFileButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                pickDexFile(dexFilePathEditText, "Pick .dex file", "Pick", "dex");
+                pickDexFile(dexFilePathEditText, "Pick .dex file(s)", "Pick", "dex");
             }
         });
 
@@ -189,40 +187,28 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
                 if (dexFilePathEditText.getText().toString().isEmpty()){
                     return;
                 }
-                String initialPath = dexFilePathEditText.getText().toString();
-                if (initialPath.contains(";")) {
-                    initialPath = initialPath.split(";")[0];
+                final List<String> selectedFilePaths = parseDexPathList(dexFilePathEditText.getText().toString());
+                if (selectedFilePaths.isEmpty()) {
+                    return;
                 }
-                DexFileSelector dexSelector = new DexFileSelector(MainActivity.this, initialPath);
-                dexSelector.setOnFilesSelectedListener(new DexFileSelector.OnFilesSelectedListener() {
-                    @Override
-                    public void onFilesSelected(final List<String> selectedFilePaths) {
-                        if (McpServer.isRunning()) {
-                            new Thread(new Runnable() {
-                                @Override
-                                public void run() {
-                                    try {
-                                        McpServer.loadDexDirectly(selectedFilePaths);
-                                    } catch (Exception e) {
-                                        e.printStackTrace();
-                                    }
-                                }
-                            }).start();
+
+                if (McpServer.isRunning()) {
+                    new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                McpServer.loadDexDirectly(selectedFilePaths);
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            }
                         }
+                    }).start();
+                }
 
-                        // Convert List<String> to ArrayList<String> (if needed for Intent)
-                        ArrayList<String> filePathsArrayList = new ArrayList<String>(selectedFilePaths);
-
-                        // Set up the Intent
-                        dexEditorIntent.setClass(MainActivity.this, DexEditorActivity.class);
-                        dexEditorIntent.putStringArrayListExtra("SelectedDexFiles", filePathsArrayList);
-
-                        // Start the activity
-                        startActivity(dexEditorIntent);
-                    }
-                });
-                dexSelector.showDialog();
-
+                ArrayList<String> filePathsArrayList = new ArrayList<String>(selectedFilePaths);
+                dexEditorIntent.setClass(MainActivity.this, DexEditorActivity.class);
+                dexEditorIntent.putStringArrayListExtra("SelectedDexFiles", filePathsArrayList);
+                startActivity(dexEditorIntent);
 
             }
         });
@@ -246,7 +232,7 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
     public void pickDexFile(final TextView textView, String title, String positiveButtonText, String fileExtension) {
         final String lastPathKey = "LastPath";
         DialogProperties dialogProperties = new DialogProperties();
-        dialogProperties.selection_mode = 0; // Single file selection
+        dialogProperties.selection_mode = 1; // Multi file selection
         dialogProperties.selection_type = 0; // File selection
         dialogProperties.root = new File(FileUtil.getExternalStorageDir());
         dialogProperties.error_dir = new File(FileUtil.getExternalStorageDir());
@@ -269,7 +255,10 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
             @Override
             public void onSelectedFilePaths(String[] selectedFilePaths) {
                 ArrayList<String> filePaths = new ArrayList<>(Arrays.asList(selectedFilePaths));
-                textView.setText(filePaths.get(0)); // Set the selected file path to the TextView
+                if (filePaths.isEmpty()) {
+                    return;
+                }
+                textView.setText(joinDexPathList(filePaths));
 
                 // Save the last selected directory path in SharedPreferences
                 sharedPreferences.edit().putString(lastPathKey, new File(filePaths.get(0)).getParentFile().getAbsolutePath()).apply();
@@ -277,6 +266,35 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
         });
 
         filePickerDialog.show();
+    }
+
+    private List<String> parseDexPathList(String rawPathList) {
+        List<String> paths = new ArrayList<>();
+        if (rawPathList == null) {
+            return paths;
+        }
+        String[] parts = rawPathList.split(";");
+        for (String part : parts) {
+            String path = part.trim();
+            if (!path.isEmpty()) {
+                paths.add(path);
+            }
+        }
+        return paths;
+    }
+
+    private String joinDexPathList(List<String> paths) {
+        StringBuilder builder = new StringBuilder();
+        for (String path : paths) {
+            if (path == null || path.trim().isEmpty()) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append(";");
+            }
+            builder.append(path.trim());
+        }
+        return builder.toString();
     }
 
     @Override
