@@ -522,14 +522,14 @@ public class McpServer {
         JsonObject ignoreCaseProp = new JsonObject();
         ignoreCaseProp.addProperty("type", "boolean");
         ignoreCaseProp.addProperty("description", "Case-insensitive matching for literal and regex searches.");
-        JsonObject limitProp = new JsonObject();
-        limitProp.addProperty("type", "integer");
-        limitProp.addProperty("description", "Maximum results to return (default 200, max 1000).");
+        JsonObject searchLimitProp = new JsonObject();
+        searchLimitProp.addProperty("type", "integer");
+        searchLimitProp.addProperty("description", "Maximum results to return (default 200, max 1000).");
         sProps.add("query", qProp);
         sProps.add("type", tProp);
         sProps.add("regex", regexProp);
         sProps.add("ignoreCase", ignoreCaseProp);
-        sProps.add("limit", limitProp);
+        sProps.add("limit", searchLimitProp);
         sParams.add("properties", sProps);
         JsonArray sReq = new JsonArray();
         sReq.add("query");
