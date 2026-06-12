@@ -44,6 +44,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 public class McpServer {
     private static ServerSocket serverSocket;
@@ -513,13 +515,24 @@ public class McpServer {
         qProp.addProperty("description", "Query string");
         JsonObject tProp = new JsonObject();
         tProp.addProperty("type", "string");
-        tProp.addProperty("description", "Type of search: class, method, field, string, or code");
+        tProp.addProperty("description", "Type of search: class, method, field, string, code, or all");
+        JsonObject regexProp = new JsonObject();
+        regexProp.addProperty("type", "boolean");
+        regexProp.addProperty("description", "When true, treat query as a Java regular expression and use find() matching.");
+        JsonObject ignoreCaseProp = new JsonObject();
+        ignoreCaseProp.addProperty("type", "boolean");
+        ignoreCaseProp.addProperty("description", "Case-insensitive matching for literal and regex searches.");
+        JsonObject limitProp = new JsonObject();
+        limitProp.addProperty("type", "integer");
+        limitProp.addProperty("description", "Maximum results to return (default 200, max 1000).");
         sProps.add("query", qProp);
         sProps.add("type", tProp);
+        sProps.add("regex", regexProp);
+        sProps.add("ignoreCase", ignoreCaseProp);
+        sProps.add("limit", limitProp);
         sParams.add("properties", sProps);
         JsonArray sReq = new JsonArray();
         sReq.add("query");
-        sReq.add("type");
         sParams.add("required", sReq);
         dexSearch.add("inputSchema", sParams);
         tools.add(dexSearch);
@@ -878,46 +891,100 @@ public class McpServer {
                     textObj.addProperty("text", methodSmali);
                 } else if ("dex_search".equals(toolName)) {
                     String query = args.has("query") ? args.get("query").getAsString() : "";
-                    String type = args.has("type") ? args.get("type").getAsString() : "";
+                    String type = args.has("type") ? args.get("type").getAsString() : "all";
+                    boolean regex = args.has("regex") && args.get("regex").getAsBoolean();
+                    boolean ignoreCase = args.has("ignoreCase") && args.get("ignoreCase").getAsBoolean();
+                    int limit = args.has("limit") ? args.get("limit").getAsInt() : 200;
+                    if (limit <= 0) limit = 200;
+                    if (limit > 1000) limit = 1000;
+                    if (query.isEmpty()) {
+                        throw new Exception("query is required");
+                    }
+
+                    Pattern pattern = null;
+                    if (regex) {
+                        int flags = ignoreCase ? Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE : 0;
+                        try {
+                            pattern = Pattern.compile(query, flags);
+                        } catch (PatternSyntaxException ex) {
+                            throw new Exception("Invalid regex: " + ex.getDescription());
+                        }
+                    }
+
+                    boolean searchAll = type.isEmpty() || "all".equalsIgnoreCase(type);
+                    boolean searchClass = searchAll || "class".equalsIgnoreCase(type);
+                    boolean searchMethod = searchAll || "method".equalsIgnoreCase(type);
+                    boolean searchField = searchAll || "field".equalsIgnoreCase(type);
+                    boolean searchString = searchAll || "string".equalsIgnoreCase(type);
+                    boolean searchCode = searchAll || "code".equalsIgnoreCase(type);
+                    if (!searchAll && !searchClass && !searchMethod && !searchField && !searchString && !searchCode) {
+                        throw new Exception("Unknown search type: " + type + ". Use class, method, field, string, code, or all.");
+                    }
 
                     List<String> resultsList = new ArrayList<>();
+                    boolean truncated = false;
 
                     for (ClassDef classDef : classTree.classMap.values()) {
                         String classSig = classDef.getType();
-                        if ("class".equalsIgnoreCase(type)) {
-                            if (classSig.contains(query)) {
+                        if (searchClass) {
+                            String dotted = classSig.replace('/', '.');
+                            if (searchMatches(classSig, query, pattern, ignoreCase) || searchMatches(dotted, query, pattern, ignoreCase)) {
                                 resultsList.add("Class: " + classSig);
                             }
-                        } else if ("method".equalsIgnoreCase(type)) {
+                        }
+
+                        if (searchMethod && resultsList.size() < limit) {
                             for (Method method : classDef.getMethods()) {
-                                if (method.getName().contains(query)) {
-                                    resultsList.add("Method in " + classSig + " -> " + method.getName());
+                                String signature = methodSignature(classSig, method);
+                                if (searchMatches(method.getName(), query, pattern, ignoreCase) || searchMatches(signature, query, pattern, ignoreCase)) {
+                                    resultsList.add("Method: " + signature);
+                                    if (resultsList.size() >= limit) break;
                                 }
-                            }
-                        } else if ("field".equalsIgnoreCase(type)) {
-                            for (Field field : classDef.getFields()) {
-                                if (field.getName().contains(query)) {
-                                    resultsList.add("Field in " + classSig + " -> " + field.getName());
-                                }
-                            }
-                        } else if ("string".equalsIgnoreCase(type) || "code".equalsIgnoreCase(type)) {
-                            String smali = getPureSmali(classDef);
-                            if (smali.contains(query)) {
-                                resultsList.add("Match in " + classSig);
                             }
                         }
-                        if (resultsList.size() >= 200) {
-                            resultsList.add("...and more matches (truncated to 200)");
+
+                        if (searchField && resultsList.size() < limit) {
+                            for (Field field : classDef.getFields()) {
+                                String signature = classSig + "->" + field.getName() + ":" + field.getType();
+                                if (searchMatches(field.getName(), query, pattern, ignoreCase) || searchMatches(signature, query, pattern, ignoreCase)) {
+                                    resultsList.add("Field: " + signature);
+                                    if (resultsList.size() >= limit) break;
+                                }
+                            }
+                        }
+
+                        if ((searchString || searchCode) && resultsList.size() < limit) {
+                            String[] lines = getPureSmali(classDef).split("\n", -1);
+                            for (int i = 0; i < lines.length; i++) {
+                                String line = lines[i];
+                                String trimmed = line.trim();
+                                if (searchString && trimmed.startsWith("const-string") && searchMatches(line, query, pattern, ignoreCase)) {
+                                    resultsList.add("String in " + classSig + ":" + (i + 1) + ": " + trimmed);
+                                } else if (searchCode && searchMatches(line, query, pattern, ignoreCase)) {
+                                    resultsList.add("Code in " + classSig + ":" + (i + 1) + ": " + trimmed);
+                                }
+                                if (resultsList.size() >= limit) break;
+                            }
+                        }
+
+                        if (resultsList.size() >= limit) {
+                            truncated = true;
                             break;
                         }
                     }
 
                     StringBuilder sb = new StringBuilder();
+                    sb.append("Search mode: ").append(regex ? "regex" : "literal")
+                            .append(", type: ").append(type)
+                            .append(", results: ").append(resultsList.size()).append("\n");
                     if (resultsList.isEmpty()) {
                         sb.append("No matches found.");
                     } else {
                         for (String r : resultsList) {
                             sb.append(r).append("\n");
+                        }
+                        if (truncated) {
+                            sb.append("...and more matches (truncated to ").append(limit).append(")\n");
                         }
                     }
                     textObj.addProperty("text", sb.toString());
@@ -1528,6 +1595,19 @@ public class McpServer {
         }
 
         return (sb != null) ? sb.toString() : null;
+    }
+
+    private static boolean searchMatches(String value, String query, Pattern pattern, boolean ignoreCase) {
+        if (value == null) {
+            return false;
+        }
+        if (pattern != null) {
+            return pattern.matcher(value).find();
+        }
+        if (ignoreCase) {
+            return value.toLowerCase(java.util.Locale.ROOT).contains(query.toLowerCase(java.util.Locale.ROOT));
+        }
+        return value.contains(query);
     }
 
     private static int countOccurrences(String haystack, String needle) {

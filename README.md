@@ -17,7 +17,7 @@ This fork allows you to connect your local AI agent (like Claude Desktop, Pi, or
   - `dex_get_class_outline` — Get field and method signatures (without method bodies) to save model context window.
   - `dex_get_method` — Read Smali code of a single specific method (supports full `methodSignature` for overloads).
   - `dex_get_java` — Decompile a Smali class into fully readable Java code using the built-in JADX decompiler.
-  - `dex_search` — Fast pool search by classes, methods, fields, strings, or code.
+  - `dex_search` — Fast pool search by classes, methods, fields, strings, or code; supports literal and regex mode (`regex`, `ignoreCase`, `limit`).
   - `dex_find_usages` — Deep Xref search (who calls a method, accesses a field, or extends a class).
   - `dex_replace_in_method` — Smart precise string replacement in a method (`str_replace` approach) with instant compiler verification and uniqueness checks.
   - `dex_replace_method` — Full replacement of a method body (supports full `methodSignature` for overloads).
