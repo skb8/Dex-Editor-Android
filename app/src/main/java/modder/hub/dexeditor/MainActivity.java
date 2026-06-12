@@ -35,6 +35,8 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Bundle;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.TextView;
@@ -68,7 +70,9 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
     private Toolbar toolbar;
     private EditText dexFilePathEditText;
     private MaterialButton pickDexFileButton;
+    private MaterialButton loadMcpButton;
     private MaterialButton openDexFileButton;
+    private TextView mcpStatusTextView;
     private TextView githubLinkTextView;
 
     private SharedPreferences sharedPreferences;
@@ -141,12 +145,14 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
 
     private void disableUI() {
         pickDexFileButton.setEnabled(false);
+        loadMcpButton.setEnabled(false);
         openDexFileButton.setEnabled(false);
         dexFilePathEditText.setEnabled(false);
     }
 
     private void enableUI() {
         pickDexFileButton.setEnabled(true);
+        loadMcpButton.setEnabled(true);
         openDexFileButton.setEnabled(true);
         dexFilePathEditText.setEnabled(true);
         initializeLogic();
@@ -164,12 +170,28 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
         }
 
         pickDexFileButton = findViewById(R.id.materialbutton1);
+        loadMcpButton = findViewById(R.id.load_mcp);
         openDexFileButton = findViewById(R.id.open_dex);
+        mcpStatusTextView = findViewById(R.id.mcp_status);
         githubLinkTextView = findViewById(R.id.textview1);
         dexFilePathEditText = findViewById(R.id.edit_path);
 
         // Initialize SharedPreferences
         sharedPreferences = getSharedPreferences("pref", 0);
+
+        dexFilePathEditText.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) { }
+
+            @Override
+            public void afterTextChanged(Editable editable) {
+                updateMcpStatusForSelection();
+            }
+        });
+        updateMcpStatusForSelection();
 
         // Set up button click listeners
         pickDexFileButton.setOnClickListener(new View.OnClickListener() {
@@ -180,6 +202,12 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
         });
 
 
+        loadMcpButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                loadSelectedDexIntoMcp(true);
+            }
+        });
 
         openDexFileButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -192,18 +220,7 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
                     return;
                 }
 
-                if (McpServer.isRunning()) {
-                    new Thread(new Runnable() {
-                        @Override
-                        public void run() {
-                            try {
-                                McpServer.loadDexDirectly(selectedFilePaths);
-                            } catch (Exception e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    }).start();
-                }
+                loadSelectedDexIntoMcp(false);
 
                 ArrayList<String> filePathsArrayList = new ArrayList<String>(selectedFilePaths);
                 dexEditorIntent.setClass(MainActivity.this, DexEditorActivity.class);
@@ -297,6 +314,80 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
         return builder.toString();
     }
 
+    private void loadSelectedDexIntoMcp(final boolean showStoppedStatus) {
+        final List<String> selectedFilePaths = parseDexPathList(dexFilePathEditText.getText().toString());
+        if (selectedFilePaths.isEmpty()) {
+            setMcpStatus("No DEX selected");
+            return;
+        }
+        if (!McpServer.isRunning()) {
+            if (showStoppedStatus) {
+                setMcpStatus("MCP server is stopped. Start it from the MCP Server menu first.");
+            }
+            return;
+        }
+
+        setMcpStatus("Loading " + formatDexCount(selectedFilePaths.size()) + " into MCP...");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    McpServer.loadDexDirectly(selectedFilePaths);
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            setMcpStatus("Loaded " + formatDexCount(selectedFilePaths.size()) + " into MCP");
+                        }
+                    });
+                } catch (final Exception e) {
+                    e.printStackTrace();
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            setMcpStatus("MCP load failed: " + e.getMessage());
+                        }
+                    });
+                }
+            }
+        }).start();
+    }
+
+    private void updateMcpStatusForSelection() {
+        if (mcpStatusTextView == null || dexFilePathEditText == null) {
+            return;
+        }
+        List<String> selected = parseDexPathList(dexFilePathEditText.getText().toString());
+        if (selected.isEmpty()) {
+            setMcpStatus("No DEX selected");
+            return;
+        }
+        if (pathsEqual(joinDexPathList(selected), McpServer.loadedDexPath)) {
+            setMcpStatus("Loaded " + formatDexCount(selected.size()) + " into MCP");
+        } else if (McpServer.isRunning()) {
+            setMcpStatus("Selected " + formatDexCount(selected.size()) + ", not loaded into MCP");
+        } else {
+            setMcpStatus("Selected " + formatDexCount(selected.size()) + ". MCP server is stopped");
+        }
+    }
+
+    private void setMcpStatus(String status) {
+        if (mcpStatusTextView != null) {
+            mcpStatusTextView.setText(status);
+        }
+    }
+
+    private String formatDexCount(int count) {
+        return count == 1 ? "1 file" : count + " files";
+    }
+
+    private boolean pathsEqual(String left, String right) {
+        return normalizePathList(left).equals(normalizePathList(right));
+    }
+
+    private String normalizePathList(String rawPathList) {
+        return joinDexPathList(parseDexPathList(rawPathList));
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
@@ -308,6 +399,7 @@ public class MainActivity extends AppCompatActivity implements FilePermissionMan
                     public void run() {
                         if (dexFilePathEditText != null) {
                             dexFilePathEditText.setText(newPath);
+                            updateMcpStatusForSelection();
                         }
                     }
                 });

@@ -44,7 +44,12 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:hint="Enter dex path"
-                android:imeOptions="actionDone" />
+                android:imeOptions="actionDone"
+                android:inputType="textMultiLine|textNoSuggestions"
+                android:maxLines="3"
+                android:minLines="1"
+                android:scrollbars="vertical"
+                android:singleLine="false" />
         </com.google.android.material.textfield.TextInputLayout>
         <com.google.android.material.button.MaterialButton
             android:textAppearance="@style/TextAppearance.MaterialComponents.Button"
@@ -57,7 +62,35 @@
             android:padding="8dp"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Pick .dex file"
+            android:text="Pick .dex file(s)"
+            app:backgroundTint="@color/colorPrimary"
+            app:cornerRadius="8dp"
+            style="@style/Widget.MaterialComponents.Button" />
+        <TextView
+            android:id="@+id/mcp_status"
+            android:textSize="14sp"
+            android:textColor="#ff607d8b"
+            android:gravity="center"
+            android:layout_gravity="center"
+            android:paddingLeft="20dp"
+            android:paddingRight="20dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="No DEX selected" />
+        <com.google.android.material.button.MaterialButton
+            android:textAppearance="@style/TextAppearance.MaterialComponents.Button"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="#ffffffff"
+            android:gravity="center"
+            android:layout_gravity="center"
+            android:id="@+id/load_mcp"
+            android:padding="8dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Load into MCP"
             app:backgroundTint="@color/colorPrimary"
             app:cornerRadius="8dp"
             style="@style/Widget.MaterialComponents.Button" />

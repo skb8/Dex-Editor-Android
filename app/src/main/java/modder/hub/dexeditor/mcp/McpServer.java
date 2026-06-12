@@ -257,7 +257,11 @@ public class McpServer {
                 sendHttpNoContent(os);
             } else {
                 log("Response body: " + responseBody);
-                sendHttpResponse(os, 200, "OK", "application/json", responseBody);
+                if (isJsonRpcErrorResponse(responseBody)) {
+                    sendHttpResponse(os, 500, "JSON-RPC Error", "application/json", responseBody);
+                } else {
+                    sendHttpResponse(os, 200, "OK", "application/json", responseBody);
+                }
             }
         } catch (Exception e) {
             log("Connection error: " + e.getMessage());
@@ -269,6 +273,15 @@ public class McpServer {
             try {
                 socket.close();
             } catch (Exception ignored) {}
+        }
+    }
+
+    private static boolean isJsonRpcErrorResponse(String responseBody) {
+        try {
+            JsonElement element = JsonParser.parseString(responseBody);
+            return element.isJsonObject() && element.getAsJsonObject().has("error");
+        } catch (Exception ignored) {
+            return false;
         }
     }
 
@@ -1392,8 +1405,7 @@ public class McpServer {
                 }
             }
         } catch (Exception e) {
-            textObj.addProperty("text", "Error executing " + toolName + ": " + e.getMessage());
-            result.addProperty("isError", true);
+            throw new Exception("Error executing " + toolName + ": " + e.getMessage(), e);
         }
 
         content.add(textObj);
